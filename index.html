@@ -15,11 +15,7 @@
           <span>CELLULARIS</span>
         </div>
         <div class="header-actions">
-          <span class="live-mark"><i></i>CANVAS 2D</span>
-          <button id="playButton" class="play-button" type="button" aria-label="自动生长">
-            <span class="play-icon" aria-hidden="true"></span>
-            <span id="playLabel">自动生长</span>
-          </button>
+          <span class="live-mark"><i></i><span id="growthStatus">拖动活性细胞以建立连接</span></span>
         </div>
       </header>
 
@@ -32,14 +28,14 @@
         </div>
 
         <aside class="readout" aria-live="polite">
-          <div><span id="cellCount">24</span><small>细胞</small></div>
-          <div><span id="generationCount">03</span><small>代</small></div>
+          <div><span id="cellCount">01</span><small>细胞</small></div>
+          <div><span id="generationCount">00</span><small>代</small></div>
           <div><span id="fpsCount">--</span><small>FPS</small></div>
         </aside>
 
         <div class="pan-hint" id="panHint">
           <span class="pan-icon" aria-hidden="true">↔</span>
-          拖动画布探索 · 滚轮缩放
+          从珊瑚色细胞膜拖向灰色核心 · 空白处平移
         </div>
 
         <nav class="view-tools" aria-label="画布缩放控制">
@@ -49,18 +45,7 @@
         </nav>
       </section>
 
-      <footer class="control-dock">
-        <div class="range-heading">
-          <label for="cellSlider">细胞数量</label>
-          <output id="rangeOutput" for="cellSlider">24 / 259</output>
-        </div>
-        <div class="range-row">
-          <span>01</span>
-          <input id="cellSlider" type="range" min="1" max="259" value="24" aria-label="细胞数量" />
-          <span>259</span>
-        </div>
-      </footer>
     </main>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=cell-link-1"></script>
   </body>
 </html>

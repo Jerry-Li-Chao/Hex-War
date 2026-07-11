@@ -16,13 +16,19 @@ This first version focuses on proving the visual language, growth model, and cam
 ### Included
 
 - Recursive six-branch cellular growth
-- A slider for exploring any population from 1 to 259 cells
+- Autonomous growth from a single core to the complete 259-cell organism
+- Generation-specific birth timing: 1.5s, 0.75s, and 0.375s per cell
+- Dormant gray colonies that can be captured by an active colony
+- Drag-to-connect interaction from any point inside an active membrane
+- Cell-chain construction that consumes cells from the source colony
+- Animated one-cell-per-second transfer across established links
+- Converted colonies combine autonomous growth with incoming link growth
 - Animated cell births and branch formation
 - Multiple cell sizes that communicate hierarchy
 - An infinite-feeling, draggable world camera
 - Cursor-centered wheel zoom and full-world framing
-- Automatic growth playback
 - Real-time cell count, generation, camera position, zoom, and FPS
+- Four cached organism-membrane templates for the core and three complete generations
 - Canvas 2D rendering with viewport culling and high-DPI performance limits
 - Responsive desktop and mobile interface
 
@@ -50,8 +56,8 @@ No package installation or build step is required.
 - Scroll to zoom around the cursor
 - Use `+` and `−` for stepped zoom
 - Use `全览` to frame the complete organism
-- Drag the population slider to grow or rewind the structure
-- Use `自动生长` to play the growth sequence
+- Press inside an active membrane and drag onto a gray colony to establish a link
+- Observe the organism grow autonomously; growth cannot be paused or scrubbed
 
 ## Architecture
 
