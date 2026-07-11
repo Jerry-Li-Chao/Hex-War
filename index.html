@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f0d" />
+    <title>Cellularis</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="lab-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>CELLULARIS</span>
+        </div>
+        <div class="header-actions">
+          <span class="live-mark"><i></i>CANVAS 2D</span>
+          <button id="playButton" class="play-button" type="button" aria-label="自动生长">
+            <span class="play-icon" aria-hidden="true"></span>
+            <span id="playLabel">自动生长</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="stage" id="stage" aria-label="可拖拽的细胞分形生长画布">
+        <canvas id="gameCanvas" role="img" aria-label="细胞生长结构"></canvas>
+
+        <div class="canvas-meta">
+          <span>GENERATIVE FIELD / 01</span>
+          <span class="coordinates" id="coordinates">X 000 · Y 000</span>
+        </div>
+
+        <aside class="readout" aria-live="polite">
+          <div><span id="cellCount">24</span><small>细胞</small></div>
+          <div><span id="generationCount">03</span><small>代</small></div>
+          <div><span id="fpsCount">--</span><small>FPS</small></div>
+        </aside>
+
+        <div class="pan-hint" id="panHint">
+          <span class="pan-icon" aria-hidden="true">↔</span>
+          拖动画布探索 · 滚轮缩放
+        </div>
+
+        <nav class="view-tools" aria-label="画布缩放控制">
+          <button id="zoomIn" type="button" aria-label="放大">＋</button>
+          <button id="zoomOut" type="button" aria-label="缩小">−</button>
+          <button id="resetView" class="reset-view" type="button">全览</button>
+        </nav>
+      </section>
+
+      <footer class="control-dock">
+        <div class="range-heading">
+          <label for="cellSlider">细胞数量</label>
+          <output id="rangeOutput" for="cellSlider">24 / 259</output>
+        </div>
+        <div class="range-row">
+          <span>01</span>
+          <input id="cellSlider" type="range" min="1" max="259" value="24" aria-label="细胞数量" />
+          <span>259</span>
+        </div>
+      </footer>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
