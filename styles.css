@@ -26,7 +26,7 @@ button { font: inherit; }
   z-index: 10;
 }
 
-.brand, .live-mark, .layout-mode-button, .canvas-meta, .readout small, .pan-hint, .view-tools {
+.brand, .live-mark, .faction-legend, .layout-mode-button, .canvas-meta, .readout small, .pan-hint, .view-tools {
   font-family: "DM Mono", monospace;
   letter-spacing: .11em;
   text-transform: uppercase;
@@ -36,7 +36,15 @@ button { font: inherit; }
 .brand-mark { width: 10px; height: 10px; border: 1px solid var(--accent); border-radius: 50%; box-shadow: 0 0 10px rgba(255,115,93,.55); }
 .header-actions { display: flex; align-items: center; gap: 24px; }
 .live-mark { color: #696b64; font-size: 8px; }
-.live-mark i { display: inline-block; width: 4px; height: 4px; margin: 0 7px 2px 0; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.faction-legend { display: flex; align-items: center; gap: 12px; color: #777a72; font-size: 8px; }
+.faction-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.faction-legend i { display: block; width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; background: transparent; }
+.faction-legend .legend-player { color: #ff735d; }
+.faction-legend .legend-player i { box-shadow: 0 0 8px rgba(255,115,93,.52); }
+.faction-legend .legend-neutral { color: #747873; }
+.faction-legend .legend-neutral i { box-shadow: 0 0 7px rgba(116,120,115,.38); }
+.faction-legend .legend-enemy { color: #9be83f; }
+.faction-legend .legend-enemy i { box-shadow: 0 0 8px rgba(155,232,63,.45); }
 .layout-mode-button { padding: 8px 11px; border: 1px solid rgba(255,255,255,.13); color: #85877f; background: transparent; cursor: pointer; font-size: 8px; transition: color .2s, border-color .2s, background .2s; }
 .layout-mode-button:hover { color: var(--ink); }
 .layout-mode-button.active { color: #0d0f0d; border-color: #e9e6dd; background: #e9e6dd; }
@@ -56,7 +64,7 @@ button { font: inherit; }
 #gameCanvas { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
 
 .canvas-meta { position: absolute; left: 28px; top: 22px; color: var(--accent); font-size: 8px; pointer-events: none; }
-.faction-balance { width: 220px; }
+.faction-balance { width: clamp(130px, 18vw, 220px); }
 .balance-track { display: flex; width: 100%; height: 7px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.035); }
 .balance-track span { display: block; height: 100%; transition: width .45s cubic-bezier(.22,.72,.25,1); }
 .balance-player { width: 50%; background: #ff735d; box-shadow: 0 0 10px rgba(255,115,93,.38); }
@@ -71,7 +79,27 @@ button { font: inherit; }
 .readout span { font-family: "DM Mono", monospace; font-size: 15px; font-weight: 300; white-space: nowrap; }
 .readout small { color: #666861; font-size: 7px; margin-top: 3px; }
 .readout .readout-identity { align-self: center; padding-right: 18px; border-right: 1px solid rgba(255,255,255,.12); }
-.readout .readout-identity small { color: var(--accent); letter-spacing: .14em; white-space: nowrap; }
+.readout .readout-identity small { color: var(--accent); font-size: 10px; letter-spacing: .14em; white-space: nowrap; transition: color .2s; }
+.colony-inspector {
+  --inspector-accent: #ff735d;
+  position: absolute;
+  z-index: 4;
+  width: 144px;
+  padding: 8px 9px 9px;
+  border: 1px solid color-mix(in srgb, var(--inspector-accent) 58%, transparent);
+  background: rgba(11, 13, 11, .86);
+  box-shadow: 0 12px 34px rgba(0,0,0,.28), inset 2px 0 0 color-mix(in srgb, var(--inspector-accent) 70%, transparent);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(5px);
+  transition: opacity .18s, transform .18s, border-color .2s;
+}
+.colony-inspector.active { opacity: 1; transform: translateY(0); }
+.inspector-title { display: block; margin-bottom: 6px; color: var(--inspector-accent); font: 500 7px "DM Mono", monospace; letter-spacing: .14em; }
+.colony-inspector div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.colony-inspector small { color: #73766f; font: 400 7px "Noto Sans SC", sans-serif; letter-spacing: .03em; }
+.colony-inspector strong { color: #e9e7df; font: 400 10px "DM Mono", monospace; white-space: nowrap; }
 
 .pan-hint { position: absolute; left: 28px; bottom: 28px; color: #62645d; font-size: 7px; pointer-events: none; transition: opacity .4s ease; }
 .pan-hint.hidden { opacity: 0; }
@@ -83,18 +111,28 @@ button { font: inherit; }
 .view-tools button:hover { color: var(--accent); background: rgba(255,255,255,.04); }
 .view-tools .reset-view { width: 52px; font-size: 8px; }
 
+@media (max-width: 900px) {
+  .coordinates { display: none; }
+  .readout { gap: 12px; }
+  .readout span { font-size: 13px; }
+  .readout .readout-identity { padding-right: 12px; }
+  .readout .readout-identity small { font-size: 9px; }
+}
+
 @media (max-width: 650px) {
   .lab-shell { grid-template-rows: 60px 1fr; }
   .topbar { padding: 0 18px; }
   .live-mark { display: none; }
+  .faction-legend { gap: 9px; font-size: 7px; }
   .layout-mode-button { padding: 7px 9px; }
   .canvas-meta { left: 18px; top: 18px; }
-  .faction-balance { width: 150px; }
+  .faction-balance { width: 130px; }
   .coordinates { display: none; }
   .readout { right: 18px; top: 15px; }
   .readout { gap: 9px; }
   .readout span { font-size: 10px; }
   .readout .readout-identity { display: none; }
+  .colony-inspector { width: 132px; padding: 7px 8px 8px; }
   .view-tools { right: 18px; bottom: 18px; }
   .pan-hint { left: 18px; bottom: 22px; }
 }

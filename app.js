@@ -1,7 +1,8 @@
 const MAX_CELLS = 259;
 const FIRST_BRANCH_LENGTH = 250;
 const FRACTAL_SCALE = .32;
-const GROWTH_INTERVALS = { 1: 2000, 2: 1750, 3: 1500, 4: 1250 };
+const GROWTH_INTERVALS = { 1: 2000, 2: 1250, 3: 750, 4: 500 };
+const GROWTH_BATCHES = { 1: 1, 2: 1, 3: 2, 4: 2 };
 const TRANSFER_INTERVALS = { 1: 1750, 2: 1500, 3: 1250, 4: 1000 };
 const MEMBRANE_TEMPLATE_COUNTS = [1, 7, 43, 259];
 const PLAYER_COLORS = ['#ff735d', '#f48667', '#ed9875', '#e4aa86'];
@@ -18,6 +19,7 @@ const fpsEl = document.querySelector('#fpsCount');
 const selectedFactionEl = document.querySelector('#selectedFaction');
 const replicationRateEl = document.querySelector('#replicationRate');
 const transferRateEl = document.querySelector('#transferRate');
+const colonyInspector = document.querySelector('#colonyInspector');
 const factionBalanceEl = document.querySelector('#factionBalance');
 const playerBalanceFill = document.querySelector('#playerBalanceFill');
 const enemyBalanceFill = document.querySelector('#enemyBalanceFill');
@@ -33,6 +35,7 @@ let camera = { x: 0, y: 0, zoom: 1 };
 let cameraTouched = false;
 let pointerInteraction = null;
 let selectedColony = null;
+let hoveredColony = null;
 let connections = [];
 let transferParticles = [];
 let simulationPaused = false;
@@ -178,13 +181,13 @@ function createColony({ id, x, y, faction }) {
 }
 
 const colonies = [
-  createColony({ id: 'player-1', x: -1400, y: -600, faction: 'player' }),
-  createColony({ id: 'player-2', x: -1400, y: 600, faction: 'player' }),
-  createColony({ id: 'dormant-1', x: 0, y: -1000, faction: null }),
+  createColony({ id: 'player-1', x: -1550, y: -700, faction: 'player' }),
+  createColony({ id: 'player-2', x: -1550, y: 700, faction: 'player' }),
+  createColony({ id: 'dormant-1', x: 0, y: -1150, faction: null }),
   createColony({ id: 'dormant-2', x: 0, y: 0, faction: null }),
-  createColony({ id: 'dormant-3', x: 0, y: 1000, faction: null }),
-  createColony({ id: 'enemy-1', x: 1400, y: -600, faction: 'enemy' }),
-  createColony({ id: 'enemy-2', x: 1400, y: 600, faction: 'enemy' })
+  createColony({ id: 'dormant-3', x: 0, y: 1150, faction: null }),
+  createColony({ id: 'enemy-1', x: 1550, y: -700, faction: 'enemy' }),
+  createColony({ id: 'enemy-2', x: 1550, y: 700, faction: 'enemy' })
 ];
 const originColony = colonies[0];
 const dormantColony = colonies[2];
@@ -338,6 +341,22 @@ function colonyLevel(colony) {
   return 1;
 }
 
+function connectionCapacity(colony) {
+  const level = colonyLevel(colony);
+  if (level >= 4) return 3;
+  if (level >= 2) return 2;
+  return level === 1 ? 1 : 0;
+}
+
+function replicationProfileLevel(colony) {
+  return colony.maxCount >= MAX_CELLS ? 4 : colonyLevel(colony);
+}
+
+function outgoingConnectionCount(colony) {
+  return connections.filter(connection => connection.source === colony
+    && ['building', 'established'].includes(connection.state)).length;
+}
+
 function formatSeconds(milliseconds) {
   return `${Number((milliseconds / 1000).toFixed(2))}s`;
 }
@@ -360,24 +379,44 @@ function updateFactionBalance() {
 
 function updateReadout() {
   updateFactionBalance();
+  updateInspectorContent(hoveredColony);
   if (!selectedColony) {
     selectedFactionEl.textContent = '未选择群落';
+    selectedFactionEl.style.color = INACTIVE_COLOR;
     countEl.textContent = `-- / ${MAX_CELLS}`;
-    generationEl.textContent = '--';
-    replicationRateEl.textContent = '--';
-    transferRateEl.textContent = '--';
     return;
   }
-  const level = colonyLevel(selectedColony);
   selectedFactionEl.textContent = selectedColony.faction === 'player'
     ? '我方群落'
     : selectedColony.faction === 'enemy' ? '敌方群落' : '失活群落';
+  selectedFactionEl.style.color = selectedColony.faction === 'player'
+    ? PLAYER_COLORS[0]
+    : selectedColony.faction === 'enemy' ? ENEMY_COLORS[0] : INACTIVE_COLOR;
   countEl.textContent = `${selectedColony.count} / ${MAX_CELLS}`;
+}
+
+function updateInspectorContent(colony) {
+  if (!colony) {
+    colonyInspector.classList.remove('active');
+    return;
+  }
+  const level = colonyLevel(colony);
+  const replicationLevel = colony.active ? replicationProfileLevel(colony) : 0;
+  colonyInspector.classList.add('active');
+  colonyInspector.style.setProperty('--inspector-accent', colony.faction === 'player'
+    ? PLAYER_COLORS[0]
+    : colony.faction === 'enemy' ? ENEMY_COLORS[0] : INACTIVE_COLOR);
   generationEl.textContent = level ? `LEVEL ${level}` : 'DORMANT';
-  replicationRateEl.textContent = selectedColony.active
-    ? `${formatSeconds(GROWTH_INTERVALS[level])}${selectedColony.count >= MAX_CELLS ? ' · 已满' : ''}`
+  replicationRateEl.textContent = colony.active
+    ? `${formatSeconds(GROWTH_INTERVALS[replicationLevel])} × ${GROWTH_BATCHES[replicationLevel]}${colony.count >= MAX_CELLS ? ' · 已满' : ''}`
     : '暂停';
-  transferRateEl.textContent = selectedColony.active ? formatSeconds(TRANSFER_INTERVALS[level]) : '不可用';
+  transferRateEl.textContent = colony.active ? formatSeconds(TRANSFER_INTERVALS[level]) : '不可用';
+}
+
+function setHoveredColony(colony) {
+  if (hoveredColony === colony) return;
+  hoveredColony = colony;
+  updateInspectorContent(hoveredColony);
 }
 
 function changeColonyCount(colony, delta) {
@@ -418,12 +457,12 @@ function scheduleColonyGrowth(colony) {
   clearTimeout(colony.growthTimer);
   colony.growthTimer = null;
   if (!colony.active || colony.count >= MAX_CELLS) return;
-  const generation = colonyLevel(colony);
+  const generation = replicationProfileLevel(colony);
   const interval = GROWTH_INTERVALS[generation] ?? GROWTH_INTERVALS[4];
   colony.growthTimer = setTimeout(() => {
     runWhenSimulationActive(() => {
       colony.growthTimer = null;
-      changeColonyCount(colony, 1);
+      changeColonyCount(colony, GROWTH_BATCHES[generation] ?? 1);
       scheduleColonyGrowth(colony);
     });
   }, interval);
@@ -438,8 +477,22 @@ function activateColony(colony, faction, activeConnection) {
   scheduleColonyGrowth(colony);
 }
 
+function destroyOutgoingConnections(colony) {
+  const outgoing = connections.filter(connection => connection.source === colony);
+  if (!outgoing.length) return 0;
+  const outgoingSet = new Set(outgoing);
+  for (const connection of outgoing) {
+    clearTimeout(connection.buildTimer);
+    clearTimeout(connection.transferTimer);
+  }
+  transferParticles = transferParticles.filter(particle => !outgoingSet.has(particle.connection));
+  connections = connections.filter(connection => !outgoingSet.has(connection));
+  return outgoing.length;
+}
+
 function captureColony(colony, faction, activeConnection) {
   clearTimeout(colony.growthTimer);
+  const destroyedConnections = destroyOutgoingConnections(colony);
   colony.faction = faction;
   colony.active = true;
   colony.count = 1;
@@ -449,7 +502,9 @@ function captureColony(colony, faction, activeConnection) {
   birthTimes.set(birthKey(colony, 0), simulationTime);
   selectedColony = colony;
   updateReadout();
-  updateEstablishedConnectionStatus(activeConnection, '核心已占领');
+  updateEstablishedConnectionStatus(activeConnection, destroyedConnections
+    ? `核心已占领 · 原有 ${destroyedConnections} 条连接已摧毁`
+    : '核心已占领');
   scheduleColonyGrowth(colony);
 }
 
@@ -478,6 +533,11 @@ function buildConnectionStep(activeConnection) {
 
 function establishConnection(source, target) {
   if (connections.some(item => item.source === source && item.target === target && item.state !== 'retracting')) return;
+  const capacity = connectionCapacity(source);
+  if (outgoingConnectionCount(source) >= capacity) {
+    growthStatus.textContent = `连接槽已满 · LEVEL ${colonyLevel(source)} 最多 ${capacity} 条连接`;
+    return;
+  }
   const { start, end } = connectionEndpoints(source, target);
   const surfaceDistance = Math.hypot(end.x - start.x, end.y - start.y);
   const requiredCells = Math.max(2, Math.round(surfaceDistance / CONNECTION_CELL_SPACING) - 1);
@@ -653,6 +713,7 @@ function updateConnectionRetractions(now) {
 function updateTransfers(now) {
   const remaining = [];
   for (const particle of transferParticles) {
+    if (!connections.includes(particle.connection)) continue;
     if (now - particle.started >= particle.duration) {
       const result = receiveFactionCells(particle.target, particle.faction, 1, particle.connection);
       if (result.destroyed > 0) growthStatus.textContent = `交战 · ${particle.source.faction === 'enemy' ? '敌人' : '玩家'}消灭目标 1 个细胞`;
@@ -686,6 +747,7 @@ class CanvasRenderer {
     for (const colony of colonies) {
       this.drawBranches(ctx, colony, now);
       this.drawCells(ctx, colony, now);
+      this.drawConnectionSlots(ctx, colony);
     }
     this.drawDragPreview(ctx);
     this.drawCutPreview(ctx);
@@ -710,6 +772,38 @@ class CanvasRenderer {
       ctx.globalAlpha = (active ? (selected ? .78 : .52) : .42) * (1 - layer * .1);
       ctx.lineWidth = (selected ? 1.2 : .78) / camera.zoom;
       ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawConnectionSlots(ctx, colony) {
+    if (!colony.active) return;
+    const capacity = connectionCapacity(colony);
+    const used = Math.min(capacity, outgoingConnectionCount(colony));
+    const top = Math.min(...outerMembranePoints(colony).map(point => point.y));
+    const spacing = 14 / camera.zoom;
+    const radius = 3.5 / camera.zoom;
+    const y = colony.y + top - 18 / camera.zoom;
+    const startX = colony.x - (capacity - 1) * spacing / 2;
+    const color = factionColor(colony);
+    ctx.save();
+    ctx.lineWidth = 1.1 / camera.zoom;
+    ctx.strokeStyle = color;
+    for (let slot = 0; slot < capacity; slot += 1) {
+      const x = startX + slot * spacing;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      if (slot < used) {
+        ctx.globalAlpha = .92;
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 7;
+        ctx.fill();
+      } else {
+        ctx.globalAlpha = .62;
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -950,6 +1044,26 @@ function fitAllColonies(animate = false) {
   requestAnimationFrame(transition);
 }
 
+function updateInspectorPosition() {
+  if (!hoveredColony || !Number.isFinite(camera.x) || !Number.isFinite(camera.y)) {
+    colonyInspector.classList.remove('active');
+    return;
+  }
+  const points = outerMembranePoints(hoveredColony);
+  let right = -Infinity;
+  let lower = -Infinity;
+  for (const point of points) {
+    if (point.x > right) right = point.x;
+    if (point.y > lower) lower = point.y;
+  }
+  const anchorX = viewport.width / 2 + (hoveredColony.x + right - camera.x) * camera.zoom;
+  const anchorY = viewport.height / 2 + (hoveredColony.y + lower * .45 - camera.y) * camera.zoom;
+  const panelWidth = viewport.width <= 650 ? 132 : 144;
+  const panelHeight = 82;
+  colonyInspector.style.left = `${clamp(anchorX + 14, 14, Math.max(14, viewport.width - panelWidth - 14))}px`;
+  colonyInspector.style.top = `${clamp(anchorY, 14, Math.max(14, viewport.height - panelHeight - 14))}px`;
+}
+
 function updateCoordinates() {
   const format = value => `${value < 0 ? '−' : ''}${Math.abs(Math.round(value)).toString().padStart(3, '0')}`;
   coordinates.textContent = `X ${format(camera.x)} · Y ${format(camera.y)} · ${Math.round(camera.zoom * 100)}%`;
@@ -1016,7 +1130,11 @@ canvas.addEventListener('pointerdown', event => {
 });
 
 canvas.addEventListener('pointermove', event => {
-  if (!pointerInteraction) return;
+  if (!pointerInteraction) {
+    setHoveredColony(colonyAtPoint(screenToWorld(event.clientX, event.clientY)) ?? null);
+    return;
+  }
+  if (pointerInteraction.type === 'selection') return;
   if (pointerInteraction.type === 'colony') {
     pointerInteraction.current = screenToWorld(event.clientX, event.clientY);
     pointerInteraction.dragging = pointerInteraction.dragging || Math.hypot(event.clientX - pointerInteraction.startX, event.clientY - pointerInteraction.startY) > 6;
@@ -1039,6 +1157,9 @@ canvas.addEventListener('pointermove', event => {
   panHint.classList.add('hidden');
   updateCoordinates();
 });
+canvas.addEventListener('pointerleave', () => {
+  if (!pointerInteraction) setHoveredColony(null);
+});
 
 function finishPointerInteraction(event) {
   if (!pointerInteraction) return;
@@ -1057,6 +1178,10 @@ function finishPointerInteraction(event) {
   }
   pointerInteraction = null;
   stage.classList.remove('dragging', 'connecting', 'cutting');
+  const rect = canvas.getBoundingClientRect();
+  const insideCanvas = event.clientX >= rect.left && event.clientX <= rect.right
+    && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  setHoveredColony(insideCanvas ? colonyAtPoint(screenToWorld(event.clientX, event.clientY)) ?? null : null);
 }
 
 canvas.addEventListener('pointerup', finishPointerInteraction);
@@ -1067,7 +1192,7 @@ canvas.addEventListener('pointercancel', () => {
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
-  zoomAt(event.deltaY > 0 ? .9 : 1.1, event.clientX, event.clientY);
+  zoomAt(event.deltaY > 0 ? .99 : 1.01, event.clientX, event.clientY);
 }, { passive: false });
 
 document.querySelector('#zoomIn').addEventListener('click', () => zoomAt(1.2));
@@ -1094,6 +1219,7 @@ function gameLoop(realNow) {
   updateConnectionRetractions(simulationTime);
   updateTransfers(simulationTime);
   renderer.render(simulationTime);
+  updateInspectorPosition();
   const renderDuration = performance.now() - renderStarted;
   averageRenderMs = averageRenderMs ? averageRenderMs * .94 + renderDuration * .06 : renderDuration;
   fpsSample.frames += 1;
@@ -1129,6 +1255,6 @@ selectedColony = originColony;
 resizeCanvas();
 updateReadout();
 fitAllColonies(false);
-growthStatus.textContent = '珊瑚色玩家 · 毒性绿敌人 · 灰色中立核心';
+growthStatus.textContent = '选择群落查看状态 · 拖动活性群落建立连接';
 for (const colony of colonies.filter(colony => colony.active)) scheduleColonyGrowth(colony);
 requestAnimationFrame(gameLoop);

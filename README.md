@@ -22,7 +22,7 @@ This first version focuses on proving the visual language, growth model, and cam
 - Drag-to-connect interaction from any point inside an active membrane
 - Distance-scaled cell-chain construction that consumes cells from the source colony
 - Four dynamic colony levels based on current population, with level 4 at the complete 259-cell organism
-- Level-scaled replication intervals of 2s, 1.75s, 1.5s, and 1.25s
+- Replication curve of 2s × 1, 1.25s × 1, 0.75s × 2, and 0.5s × 2 recovery
 - Level-scaled transfer intervals of 1.75s, 1.5s, 1.25s, and 1s
 - Established links transmit cloned cells without reducing the source colony
 - Bridge fragments falling into a dormant colony activate it for the bridge owner's faction
@@ -30,8 +30,13 @@ This first version focuses on proving the visual language, growth model, and cam
 - One to four concentric membrane layers that communicate colony level at a glance
 - In-progress bridges can be cut, causing every built bridge cell to retract to its source
 - Faction-aware bridge refunds: friendly cells reinforce, hostile cells damage or capture
+- Level-based outgoing connection capacity with visible hollow and filled slot indicators
+- Captured colonies lose every outgoing link instead of converting those links to the new faction
+- Color-coded selected-colony labels and a three-faction hollow-ring header legend
+- Safe dormant-colony selection that cannot corrupt the camera with invalid coordinates
 - Distance-proportional bridge costs with evenly spaced chain cells
 - Selection-based colony metadata for population, level, replication, and transfer timing
+- A faction-colored floating inspector that follows the selected colony through pan and zoom
 - Live player-versus-enemy population balance bar
 - Converted colonies combine autonomous growth with incoming link growth
 - Active colonies can reconnect in either direction after a link is cut
