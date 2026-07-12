@@ -34,6 +34,9 @@ button { font: inherit; }
 
 .brand { display: flex; align-items: center; gap: 12px; font-size: 12px; font-weight: 500; }
 .brand-mark { width: 10px; height: 10px; border: 1px solid var(--accent); border-radius: 50%; box-shadow: 0 0 10px rgba(255,115,93,.55); }
+.language-toggle { margin-left: 2px; padding: 3px 6px; border: 1px solid #353934; background: transparent; color: #858981; font-family: "DM Mono", monospace; font-size: 7px; letter-spacing: .08em; cursor: pointer; transition: color 160ms ease, border-color 160ms ease; }
+.language-toggle:hover { color: var(--paper); border-color: #656a61; }
+.faction-legend b { font: inherit; }
 .header-actions { display: flex; align-items: center; gap: 24px; }
 .faction-legend { display: flex; align-items: center; gap: 12px; color: #777a72; font-size: 8px; }
 .faction-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -99,6 +102,9 @@ button { font: inherit; }
 .colony-inspector div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 4px; }
 .colony-inspector small { color: #73766f; font: 400 7px "Noto Sans SC", sans-serif; letter-spacing: .03em; }
 .colony-inspector strong { color: #e9e7df; font: 400 10px "DM Mono", monospace; white-space: nowrap; }
+html[lang="en"] .colony-inspector { width: 190px; }
+html[lang="en"] .colony-inspector strong { font-size: 9px; }
+html[lang="en"] .colony-inspector div { gap: 9px; }
 
 .pan-hint { position: absolute; left: 28px; bottom: 28px; color: #62645d; font-size: 7px; pointer-events: none; transition: opacity .4s ease; }
 .pan-hint.hidden { opacity: 0; }
@@ -131,6 +137,7 @@ button { font: inherit; }
   .readout span { font-size: 10px; }
   .readout .readout-identity { display: none; }
   .colony-inspector { width: 132px; padding: 7px 8px 8px; }
+  html[lang="en"] .colony-inspector { width: 172px; }
   .view-tools { right: 18px; bottom: 18px; }
   .pan-hint { left: 18px; bottom: 22px; }
 }

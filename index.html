@@ -13,12 +13,13 @@
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
           <span>CELLULARIS</span>
+          <button id="languageToggle" class="language-toggle" type="button" aria-label="Switch to English">EN</button>
         </div>
         <div class="header-actions">
           <div class="faction-legend" aria-label="阵营颜色图例">
-            <span class="legend-player"><i></i>我方</span>
-            <span class="legend-neutral"><i></i>失活</span>
-            <span class="legend-enemy"><i></i>敌方</span>
+            <span class="legend-player"><i></i><b id="legendPlayer">我方</b></span>
+            <span class="legend-neutral"><i></i><b id="legendNeutral">失活</b></span>
+            <span class="legend-enemy"><i></i><b id="legendEnemy">敌方</b></span>
           </div>
           <button id="layoutModeButton" class="layout-mode-button" type="button" aria-pressed="false">拖动模式</button>
         </div>
@@ -45,16 +46,16 @@
         </aside>
 
         <aside class="colony-inspector" id="colonyInspector" aria-live="polite">
-          <span class="inspector-title">COLONY STATUS</span>
-          <div><small>细胞</small><strong id="cellCount">1 / 259</strong></div>
+          <span class="inspector-title" id="inspectorTitle">群落状态</span>
+          <div><small id="cellLabel">细胞</small><strong id="cellCount">1 / 259</strong></div>
           <div><small>LEVEL</small><strong id="generationCount">LEVEL 1</strong></div>
-          <div><small>复制间隔</small><strong id="replicationRate">2s × 1</strong></div>
-          <div><small>传输间隔</small><strong id="transferRate">1.75s</strong></div>
+          <div><small id="replicationLabel">复制间隔</small><strong id="replicationRate">2s × 1</strong></div>
+          <div><small id="transferLabel">传输间隔</small><strong id="transferRate">1.75s</strong></div>
         </aside>
 
         <div class="pan-hint" id="panHint">
           <span class="pan-icon" aria-hidden="true">↔</span>
-          建链：从任一活性膜拖向另一群落 · 布局：开启拖动模式后移动群落
+          <span id="panHintText">建链：从任一活性膜拖向另一群落 · 布局：开启拖动模式后移动群落</span>
         </div>
 
         <nav class="view-tools" aria-label="画布缩放控制">
@@ -68,6 +69,6 @@
     <script src="./src/config.js"></script>
     <script src="./src/math.js"></script>
     <script src="./src/fractal.js"></script>
-    <script src="./app.js?v=target-paced-combat-25"></script>
+    <script src="./app.js?v=bilingual-ui-26"></script>
   </body>
 </html>

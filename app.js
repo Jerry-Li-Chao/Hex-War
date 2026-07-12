@@ -19,6 +19,7 @@ const { clamp, easeOutBack, lerp, smoothstep } = window.HexWarMath;
 
 const canvas = document.querySelector('#gameCanvas');
 const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
+const languageToggle = document.querySelector('#languageToggle');
 const stage = document.querySelector('#stage');
 const countEl = document.querySelector('#cellCount');
 const generationEl = document.querySelector('#generationCount');
@@ -35,6 +36,30 @@ const enemyBalanceCount = document.querySelector('#enemyBalanceCount');
 const layoutModeButton = document.querySelector('#layoutModeButton');
 const panHint = document.querySelector('#panHint');
 const coordinates = document.querySelector('#coordinates');
+
+const translations = {
+  zh: {
+    legendAria: '阵营颜色图例', player: '我方', neutral: '失活', enemy: '敌方', layout: '拖动模式',
+    stageAria: '可拖拽的细胞分形生长画布', canvasAria: '细胞生长结构', balanceAria: '双方细胞数量比例',
+    unselected: '未选择群落', playerColony: '我方群落', enemyColony: '敌方群落', neutralColony: '失活群落',
+    inspector: '群落状态', cells: '细胞', replication: '复制间隔', transfer: '传输间隔',
+    suppressed: '受压制', full: '已满', paused: '暂停', unavailable: '不可用', dormant: '失活',
+    panHint: '建链：从任一活性膜拖向另一群落 · 布局：开启拖动模式后移动群落',
+    viewAria: '画布缩放控制', zoomIn: '放大', zoomOut: '缩小', overview: '全览', switchAria: 'Switch to English'
+  },
+  en: {
+    legendAria: 'Faction color legend', player: 'PLAYER', neutral: 'DORMANT', enemy: 'ENEMY', layout: 'LAYOUT MODE',
+    stageAria: 'Draggable cellular fractal growth field', canvasAria: 'Cellular growth structure', balanceAria: 'Faction cell population ratio',
+    unselected: 'NO COLONY SELECTED', playerColony: 'PLAYER COLONY', enemyColony: 'ENEMY COLONY', neutralColony: 'DORMANT COLONY',
+    inspector: 'COLONY STATUS', cells: 'CELLS', replication: 'REPLICATION', transfer: 'TRANSFER',
+    suppressed: 'SUPPRESSED', full: 'FULL', paused: 'PAUSED', unavailable: 'N/A', dormant: 'DORMANT',
+    panHint: 'LINK: drag from any active membrane to another colony · LAYOUT: enable layout mode to reposition colonies',
+    viewAria: 'Canvas zoom controls', zoomIn: 'Zoom in', zoomOut: 'Zoom out', overview: 'OVERVIEW', switchAria: '切换至中文'
+  }
+};
+let currentLanguage = 'zh';
+try { currentLanguage = localStorage.getItem('cellularis-language') === 'en' ? 'en' : 'zh'; } catch {}
+const t = key => translations[currentLanguage][key];
 
 let viewport = { width: 1, height: 1, dpr: 1 };
 let camera = { x: 0, y: 0, zoom: 1 };
@@ -269,6 +294,30 @@ function formatSeconds(milliseconds) {
   return `${Number((milliseconds / 1000).toFixed(2))}s`;
 }
 
+function applyLanguage() {
+  document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
+  languageToggle.textContent = currentLanguage === 'zh' ? 'EN' : '中';
+  languageToggle.setAttribute('aria-label', t('switchAria'));
+  document.querySelector('#legendPlayer').textContent = t('player');
+  document.querySelector('#legendNeutral').textContent = t('neutral');
+  document.querySelector('#legendEnemy').textContent = t('enemy');
+  document.querySelector('.faction-legend').setAttribute('aria-label', t('legendAria'));
+  layoutModeButton.textContent = t('layout');
+  stage.setAttribute('aria-label', t('stageAria'));
+  canvas.setAttribute('aria-label', t('canvasAria'));
+  factionBalanceEl.setAttribute('aria-label', t('balanceAria'));
+  document.querySelector('#inspectorTitle').textContent = t('inspector');
+  document.querySelector('#cellLabel').textContent = t('cells');
+  document.querySelector('#replicationLabel').textContent = t('replication');
+  document.querySelector('#transferLabel').textContent = t('transfer');
+  document.querySelector('#panHintText').textContent = t('panHint');
+  document.querySelector('.view-tools').setAttribute('aria-label', t('viewAria'));
+  document.querySelector('#zoomIn').setAttribute('aria-label', t('zoomIn'));
+  document.querySelector('#zoomOut').setAttribute('aria-label', t('zoomOut'));
+  document.querySelector('#resetView').textContent = t('overview');
+  updateReadout();
+}
+
 function updateFactionBalance() {
   const playerCells = colonies
     .filter(colony => colony.faction === 'player')
@@ -280,9 +329,11 @@ function updateFactionBalance() {
   const playerShare = activeCells ? playerCells / activeCells * 100 : 50;
   playerBalanceFill.style.width = `${playerShare}%`;
   enemyBalanceFill.style.width = `${100 - playerShare}%`;
-  playerBalanceCount.textContent = `我方 ${playerCells}`;
-  enemyBalanceCount.textContent = `敌方 ${enemyCells}`;
-  factionBalanceEl.setAttribute('aria-label', `我方 ${playerCells} 个细胞，敌方 ${enemyCells} 个细胞`);
+  playerBalanceCount.textContent = `${t('player')} ${playerCells}`;
+  enemyBalanceCount.textContent = `${t('enemy')} ${enemyCells}`;
+  factionBalanceEl.setAttribute('aria-label', currentLanguage === 'zh'
+    ? `我方 ${playerCells} 个细胞，敌方 ${enemyCells} 个细胞`
+    : `Player ${playerCells} cells, enemy ${enemyCells} cells`);
 }
 
 // DOM readouts and hover inspector
@@ -290,13 +341,13 @@ function updateReadout() {
   updateFactionBalance();
   updateInspectorContent(hoveredColony);
   if (!selectedColony) {
-    selectedFactionEl.textContent = '未选择群落';
+    selectedFactionEl.textContent = t('unselected');
     selectedFactionEl.style.color = INACTIVE_COLOR;
     return;
   }
   selectedFactionEl.textContent = selectedColony.faction === 'player'
-    ? '我方群落'
-    : selectedColony.faction === 'enemy' ? '敌方群落' : '失活群落';
+    ? t('playerColony')
+    : selectedColony.faction === 'enemy' ? t('enemyColony') : t('neutralColony');
   selectedFactionEl.style.color = selectedColony.faction === 'player'
     ? PLAYER_COLORS[0]
     : selectedColony.faction === 'enemy' ? ENEMY_COLORS[0] : INACTIVE_COLOR;
@@ -315,11 +366,11 @@ function updateInspectorContent(colony) {
     ? PLAYER_COLORS[0]
     : colony.faction === 'enemy' ? ENEMY_COLORS[0] : INACTIVE_COLOR);
   countEl.textContent = `${colony.count} / ${MAX_CELLS}`;
-  generationEl.textContent = level ? `LEVEL ${level}` : 'DORMANT';
+  generationEl.textContent = level ? `LEVEL ${level}` : t('dormant');
   replicationRateEl.textContent = colony.active
-    ? `${formatSeconds(effectiveGrowthInterval(colony, replicationLevel))} × ${GROWTH_BATCHES[replicationLevel]}${hostileLinks ? ' · 受压制' : ''}${colony.count >= MAX_CELLS ? ' · 已满' : ''}`
-    : '暂停';
-  transferRateEl.textContent = colony.active ? formatSeconds(TRANSFER_INTERVALS[level]) : '不可用';
+    ? `${formatSeconds(effectiveGrowthInterval(colony, replicationLevel))} × ${GROWTH_BATCHES[replicationLevel]}${hostileLinks ? ` · ${t('suppressed')}` : ''}${colony.count >= MAX_CELLS ? ` · ${t('full')}` : ''}`
+    : t('paused');
+  transferRateEl.textContent = colony.active ? formatSeconds(TRANSFER_INTERVALS[level]) : t('unavailable');
 }
 
 function setHoveredColony(colony) {
@@ -980,8 +1031,8 @@ function updateInspectorPosition() {
   }
   const anchorX = viewport.width / 2 + (hoveredColony.x + right - camera.x) * camera.zoom;
   const anchorY = viewport.height / 2 + (hoveredColony.y + lower * .45 - camera.y) * camera.zoom;
-  const panelWidth = viewport.width <= 650 ? 132 : 144;
-  const panelHeight = 98;
+  const panelWidth = colonyInspector.offsetWidth || (viewport.width <= 650 ? 132 : 144);
+  const panelHeight = colonyInspector.offsetHeight || 98;
   colonyInspector.style.left = `${clamp(anchorX + 14, 14, Math.max(14, viewport.width - panelWidth - 14))}px`;
   colonyInspector.style.top = `${clamp(anchorY, 14, Math.max(14, viewport.height - panelHeight - 14))}px`;
 }
@@ -1121,6 +1172,11 @@ canvas.addEventListener('wheel', event => {
 document.querySelector('#zoomIn').addEventListener('click', () => zoomAt(1.2));
 document.querySelector('#zoomOut').addEventListener('click', () => zoomAt(.82));
 document.querySelector('#resetView').addEventListener('click', () => { cameraTouched = false; fitAllColonies(true); });
+languageToggle.addEventListener('click', () => {
+  currentLanguage = currentLanguage === 'zh' ? 'en' : 'zh';
+  try { localStorage.setItem('cellularis-language', currentLanguage); } catch {}
+  applyLanguage();
+});
 layoutModeButton.addEventListener('click', () => {
   simulationPaused = !simulationPaused;
   layoutModeButton.classList.toggle('active', simulationPaused);
@@ -1174,7 +1230,7 @@ function gameLoop(realNow) {
 
 selectedColony = originColony;
 resizeCanvas();
-updateReadout();
+applyLanguage();
 fitAllColonies(false);
 for (const colony of colonies.filter(colony => colony.active)) scheduleColonyGrowth(colony);
 requestAnimationFrame(gameLoop);
