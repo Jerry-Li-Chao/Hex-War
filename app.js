@@ -1,12 +1,17 @@
 const {
   CONNECTION_CELL_SPACING,
   ENEMY_COLORS,
+  GAME_SPEED,
   GROWTH_BATCHES,
   GROWTH_INTERVALS,
   INACTIVE_COLOR,
+  HOSTILE_GROWTH_FACTOR_PER_LINK,
+  HIGHER_LEVEL_ATTACK_BUDGETS_BY_TARGET,
+  LOWER_LEVEL_ATTACK_BUDGETS_BY_TARGET,
   MAX_CELLS,
   MEMBRANE_TEMPLATE_COUNTS,
   PLAYER_COLORS,
+  SAME_LEVEL_ATTACK_BUDGETS,
   TRANSFER_INTERVALS
 } = window.HexWarConfig;
 const { buildMembrane, createGrowthOrder, OrganismWorld } = window.HexWarFractal;
@@ -27,7 +32,6 @@ const playerBalanceFill = document.querySelector('#playerBalanceFill');
 const enemyBalanceFill = document.querySelector('#enemyBalanceFill');
 const playerBalanceCount = document.querySelector('#playerBalanceCount');
 const enemyBalanceCount = document.querySelector('#enemyBalanceCount');
-const growthStatus = document.querySelector('#growthStatus');
 const layoutModeButton = document.querySelector('#layoutModeButton');
 const panHint = document.querySelector('#panHint');
 const coordinates = document.querySelector('#coordinates');
@@ -244,6 +248,23 @@ function outgoingConnectionCount(colony) {
     && ['building', 'established'].includes(connection.state)).length;
 }
 
+function hostileIncomingConnectionCount(colony) {
+  if (!colony.active) return 0;
+  return connections.filter(connection => connection.target === colony
+    && connection.state === 'established'
+    && connection.source.faction !== colony.faction).length;
+}
+
+function effectiveGrowthInterval(colony, replicationLevel = replicationProfileLevel(colony)) {
+  const hostileLinks = hostileIncomingConnectionCount(colony);
+  const growthMultiplier = Math.pow(HOSTILE_GROWTH_FACTOR_PER_LINK, hostileLinks);
+  return GROWTH_INTERVALS[replicationLevel] / growthMultiplier / GAME_SPEED;
+}
+
+function realDelay(milliseconds) {
+  return milliseconds / GAME_SPEED;
+}
+
 function formatSeconds(milliseconds) {
   return `${Number((milliseconds / 1000).toFixed(2))}s`;
 }
@@ -271,7 +292,6 @@ function updateReadout() {
   if (!selectedColony) {
     selectedFactionEl.textContent = '未选择群落';
     selectedFactionEl.style.color = INACTIVE_COLOR;
-    countEl.textContent = `-- / ${MAX_CELLS}`;
     return;
   }
   selectedFactionEl.textContent = selectedColony.faction === 'player'
@@ -280,7 +300,6 @@ function updateReadout() {
   selectedFactionEl.style.color = selectedColony.faction === 'player'
     ? PLAYER_COLORS[0]
     : selectedColony.faction === 'enemy' ? ENEMY_COLORS[0] : INACTIVE_COLOR;
-  countEl.textContent = `${selectedColony.count} / ${MAX_CELLS}`;
 }
 
 function updateInspectorContent(colony) {
@@ -290,13 +309,15 @@ function updateInspectorContent(colony) {
   }
   const level = colonyLevel(colony);
   const replicationLevel = colony.active ? replicationProfileLevel(colony) : 0;
+  const hostileLinks = hostileIncomingConnectionCount(colony);
   colonyInspector.classList.add('active');
   colonyInspector.style.setProperty('--inspector-accent', colony.faction === 'player'
     ? PLAYER_COLORS[0]
     : colony.faction === 'enemy' ? ENEMY_COLORS[0] : INACTIVE_COLOR);
+  countEl.textContent = `${colony.count} / ${MAX_CELLS}`;
   generationEl.textContent = level ? `LEVEL ${level}` : 'DORMANT';
   replicationRateEl.textContent = colony.active
-    ? `${formatSeconds(GROWTH_INTERVALS[replicationLevel])} × ${GROWTH_BATCHES[replicationLevel]}${colony.count >= MAX_CELLS ? ' · 已满' : ''}`
+    ? `${formatSeconds(effectiveGrowthInterval(colony, replicationLevel))} × ${GROWTH_BATCHES[replicationLevel]}${hostileLinks ? ' · 受压制' : ''}${colony.count >= MAX_CELLS ? ' · 已满' : ''}`
     : '暂停';
   transferRateEl.textContent = colony.active ? formatSeconds(TRANSFER_INTERVALS[level]) : '不可用';
 }
@@ -333,7 +354,6 @@ function changeColonyCount(colony, delta) {
   if (levelChanged) {
     for (const activeConnection of connections.filter(item => item.state === 'established' && item.source === colony)) {
       clearTimeout(activeConnection.transferTimer);
-      updateEstablishedConnectionStatus(activeConnection, delta > 0 ? '源群落升级' : '源群落降级');
       scheduleTransfer(activeConnection);
     }
   }
@@ -347,7 +367,7 @@ function scheduleColonyGrowth(colony) {
   colony.growthTimer = null;
   if (!colony.active || colony.count >= MAX_CELLS) return;
   const generation = replicationProfileLevel(colony);
-  const interval = GROWTH_INTERVALS[generation] ?? GROWTH_INTERVALS[4];
+  const interval = effectiveGrowthInterval(colony, generation);
   colony.growthTimer = setTimeout(() => {
     runWhenSimulationActive(() => {
       colony.growthTimer = null;
@@ -357,12 +377,11 @@ function scheduleColonyGrowth(colony) {
   }, interval);
 }
 
-function activateColony(colony, faction, activeConnection) {
+function activateColony(colony, faction) {
   if (colony.active) return;
   colony.active = true;
   colony.faction = faction;
   selectedColony = colony;
-  updateEstablishedConnectionStatus(activeConnection, '目标已激活');
   scheduleColonyGrowth(colony);
 }
 
@@ -370,18 +389,24 @@ function destroyOutgoingConnections(colony) {
   const outgoing = connections.filter(connection => connection.source === colony);
   if (!outgoing.length) return 0;
   const outgoingSet = new Set(outgoing);
+  const affectedTargets = new Set(outgoing
+    .filter(connection => connection.state === 'established'
+      && connection.target.active
+      && connection.source.faction !== connection.target.faction)
+    .map(connection => connection.target));
   for (const connection of outgoing) {
     clearTimeout(connection.buildTimer);
     clearTimeout(connection.transferTimer);
   }
   transferParticles = transferParticles.filter(particle => !outgoingSet.has(particle.connection));
   connections = connections.filter(connection => !outgoingSet.has(connection));
+  for (const target of affectedTargets) scheduleColonyGrowth(target);
   return outgoing.length;
 }
 
-function captureColony(colony, faction, activeConnection) {
+function captureColony(colony, faction) {
   clearTimeout(colony.growthTimer);
-  const destroyedConnections = destroyOutgoingConnections(colony);
+  destroyOutgoingConnections(colony);
   colony.faction = faction;
   colony.active = true;
   colony.count = 1;
@@ -391,9 +416,6 @@ function captureColony(colony, faction, activeConnection) {
   birthTimes.set(birthKey(colony, 0), simulationTime);
   selectedColony = colony;
   updateReadout();
-  updateEstablishedConnectionStatus(activeConnection, destroyedConnections
-    ? `核心已占领 · 原有 ${destroyedConnections} 条连接已摧毁`
-    : '核心已占领');
   scheduleColonyGrowth(colony);
 }
 
@@ -405,58 +427,61 @@ function buildConnectionStep(activeConnection) {
     return;
   }
   if (activeConnection.source.count <= 1) {
-    growthStatus.textContent = '源细胞不足 · 等待自我增殖';
-    activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), 220);
+    activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), realDelay(220));
     return;
   }
   changeColonyCount(activeConnection.source, -1);
   activeConnection.builtCells += 1;
-  growthStatus.textContent = `建立连接 · ${activeConnection.builtCells} / ${activeConnection.requiredCells}`;
   if (activeConnection.builtCells >= activeConnection.requiredCells) {
     activeConnection.state = 'established';
-    updateEstablishedConnectionStatus(activeConnection, '已建立连接');
+    activeConnection.targetLevelAtEstablishment = colonyLevel(activeConnection.target);
+    if (activeConnection.target.active && activeConnection.source.faction !== activeConnection.target.faction) {
+      scheduleColonyGrowth(activeConnection.target);
+    }
     scheduleTransfer(activeConnection);
     return;
   }
-  activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), 160);
+  activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), realDelay(160));
 }
 
 function establishConnection(source, target) {
   if (connections.some(item => item.source === source && item.target === target && item.state !== 'retracting')) return;
   const capacity = connectionCapacity(source);
-  if (outgoingConnectionCount(source) >= capacity) {
-    growthStatus.textContent = `连接槽已满 · LEVEL ${colonyLevel(source)} 最多 ${capacity} 条连接`;
-    return;
-  }
+  if (outgoingConnectionCount(source) >= capacity) return;
   const { start, end } = connectionEndpoints(source, target);
   const surfaceDistance = Math.hypot(end.x - start.x, end.y - start.y);
   const requiredCells = Math.max(2, Math.round(surfaceDistance / CONNECTION_CELL_SPACING) - 1);
-  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, surfaceDistance, wavePhase: Math.random() * Math.PI * 2, buildTimer: null, transferTimer: null };
+  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, surfaceDistance, wavePhase: Math.random() * Math.PI * 2, sourceLevelAtCreation: colonyLevel(source), buildTimer: null, transferTimer: null };
   connections.push(activeConnection);
   selectedColony = source;
-  growthStatus.textContent = `建立连接 · 0 / ${requiredCells}`;
   buildConnectionStep(activeConnection);
-}
-
-function connectionDirectionLabel(activeConnection) {
-  if (!activeConnection) return '';
-  return activeConnection.source.x <= activeConnection.target.x ? '左 → 右' : '右 → 左';
 }
 
 function transferIntervalForConnection(activeConnection) {
   if (!activeConnection) return TRANSFER_INTERVALS[1];
   const generation = colonyLevel(activeConnection.source);
-  return TRANSFER_INTERVALS[generation];
+  return TRANSFER_INTERVALS[generation] / GAME_SPEED;
 }
 
-function transferRateLabel(activeConnection) {
-  const seconds = transferIntervalForConnection(activeConnection) / 1000;
-  return `${String(seconds).replace(/0+$/, '').replace(/\.$/, '')}s / 细胞`;
-}
-
-function updateEstablishedConnectionStatus(activeConnection, prefix = '已建立连接') {
-  if (!activeConnection) return;
-  growthStatus.textContent = `${prefix} · ${connectionDirectionLabel(activeConnection)} · ${transferRateLabel(activeConnection)}`;
+function hostilePayloadForConnection(activeConnection) {
+  const sourceLevel = Math.max(
+    colonyLevel(activeConnection.source),
+    activeConnection.sourceLevelAtCreation ?? 0
+  );
+  const targetLevel = Math.max(
+    colonyLevel(activeConnection.target),
+    activeConnection.targetLevelAtEstablishment ?? 0
+  );
+  const totalBudget = sourceLevel < targetLevel
+    ? LOWER_LEVEL_ATTACK_BUDGETS_BY_TARGET[targetLevel] ?? 0
+    : sourceLevel === targetLevel
+      ? SAME_LEVEL_ATTACK_BUDGETS[sourceLevel]
+      : HIGHER_LEVEL_ATTACK_BUDGETS_BY_TARGET[targetLevel] ?? SAME_LEVEL_ATTACK_BUDGETS[sourceLevel];
+  const hostileLinks = Math.max(1, hostileIncomingConnectionCount(activeConnection.target));
+  activeConnection.attackRemainder = (activeConnection.attackRemainder ?? 0) + totalBudget / hostileLinks;
+  const payload = Math.floor(activeConnection.attackRemainder);
+  activeConnection.attackRemainder -= payload;
+  return payload;
 }
 
 function launchTransfer(activeConnection) {
@@ -464,7 +489,18 @@ function launchTransfer(activeConnection) {
   const { source, target } = activeConnection;
   const sameFaction = source.faction === target.faction;
   if (sameFaction && target.count >= MAX_CELLS) return;
-  transferParticles.push({ connection: activeConnection, source, target, faction: source.faction, started: simulationTime, duration: 820 });
+  const amount = target.active && !sameFaction ? hostilePayloadForConnection(activeConnection) : 1;
+  for (let index = 0; index < amount; index += 1) {
+    transferParticles.push({
+      connection: activeConnection,
+      source,
+      target,
+      faction: source.faction,
+      amount: 1,
+      started: simulationTime + index * 18,
+      duration: 820
+    });
+  }
 }
 
 function scheduleTransfer(activeConnection) {
@@ -511,11 +547,11 @@ function snakeIntersectionAmount(activeConnection, cutStart, cutEnd, now, maxAmo
   return null;
 }
 
-function receiveFactionCells(target, faction, amount, activeConnection) {
+function receiveFactionCells(target, faction, amount) {
   const result = { added: 0, destroyed: 0, captured: false, activated: false };
   if (amount <= 0) return result;
   if (!target.active) {
-    activateColony(target, faction, activeConnection);
+    activateColony(target, faction);
     changeColonyCount(target, amount);
     result.added = amount;
     result.activated = true;
@@ -531,7 +567,7 @@ function receiveFactionCells(target, faction, amount, activeConnection) {
   result.destroyed = destroyed;
   let remaining = amount - destroyed;
   if (remaining > 0) {
-    captureColony(target, faction, activeConnection);
+    captureColony(target, faction);
     result.captured = true;
     remaining -= 1;
     if (remaining > 0) {
@@ -546,27 +582,23 @@ function finishConnectionRetraction(activeConnection) {
   if (!connections.includes(activeConnection) || activeConnection.state !== 'retracting') return;
   changeColonyCount(activeConnection.source, activeConnection.sourceRefund);
   if (activeConnection.returnToSource) {
-    growthStatus.textContent = `建桥已取消 · ${activeConnection.sourceRefund} 个细胞全部返回源群落`;
     connections = connections.filter(item => item !== activeConnection);
     return;
   }
-  const targetResult = receiveFactionCells(
+  receiveFactionCells(
     activeConnection.target,
     activeConnection.source.faction,
-    activeConnection.targetRefund,
-    activeConnection
+    activeConnection.targetRefund
   );
-  growthStatus.textContent = targetResult.captured
-    ? `连接已切断 · 目标被桥梁细胞占领 · 可重新建链`
-    : targetResult.destroyed > 0
-      ? `连接已切断 · 目标损失 ${targetResult.destroyed} 个细胞 · 可重新建链`
-      : `连接已切断 · 左侧返还 ${activeConnection.leftRefund} · 右侧返还 ${activeConnection.rightRefund} · 可重新建链`;
   connections = connections.filter(item => item !== activeConnection);
 }
 
 function cutConnection(activeConnection, amount) {
   if (!connections.includes(activeConnection) || !['building', 'established'].includes(activeConnection.state)) return;
   const wasBuilding = activeConnection.state === 'building';
+  const wasHostile = activeConnection.state === 'established'
+    && activeConnection.target.active
+    && activeConnection.source.faction !== activeConnection.target.faction;
   clearTimeout(activeConnection.transferTimer);
   clearTimeout(activeConnection.buildTimer);
   transferParticles = transferParticles.filter(particle => particle.connection !== activeConnection);
@@ -578,6 +610,7 @@ function cutConnection(activeConnection, amount) {
   const leftRefund = sourceIsLeft ? sourceRefund : targetRefund;
   const rightRefund = sourceIsLeft ? targetRefund : sourceRefund;
   activeConnection.state = 'retracting';
+  if (wasHostile) scheduleColonyGrowth(activeConnection.target);
   activeConnection.returnToSource = wasBuilding;
   activeConnection.cutAmount = amount;
   activeConnection.sourceRefund = sourceRefund;
@@ -588,9 +621,6 @@ function cutConnection(activeConnection, amount) {
   activeConnection.retractDuration = wasBuilding ? 980 : 1440;
   canvas.dataset.cutLeft = String(leftRefund);
   canvas.dataset.cutRight = String(rightRefund);
-  growthStatus.textContent = wasBuilding
-    ? `取消建桥 · ${sourceRefund} 个细胞正在返回源群落`
-    : `正在撤回 · 左侧 ${leftRefund} · 右侧 ${rightRefund}`;
 }
 
 function updateConnectionRetractions(now) {
@@ -606,8 +636,7 @@ function updateTransfers(now) {
   for (const particle of transferParticles) {
     if (!connections.includes(particle.connection)) continue;
     if (now - particle.started >= particle.duration) {
-      const result = receiveFactionCells(particle.target, particle.faction, 1, particle.connection);
-      if (result.destroyed > 0) growthStatus.textContent = `交战 · ${particle.source.faction === 'enemy' ? '敌人' : '玩家'}消灭目标 1 个细胞`;
+      receiveFactionCells(particle.target, particle.faction, particle.amount ?? 1);
     } else {
       remaining.push(particle);
     }
@@ -952,7 +981,7 @@ function updateInspectorPosition() {
   const anchorX = viewport.width / 2 + (hoveredColony.x + right - camera.x) * camera.zoom;
   const anchorY = viewport.height / 2 + (hoveredColony.y + lower * .45 - camera.y) * camera.zoom;
   const panelWidth = viewport.width <= 650 ? 132 : 144;
-  const panelHeight = 82;
+  const panelHeight = 98;
   colonyInspector.style.left = `${clamp(anchorX + 14, 14, Math.max(14, viewport.width - panelWidth - 14))}px`;
   colonyInspector.style.top = `${clamp(anchorY, 14, Math.max(14, viewport.height - panelHeight - 14))}px`;
 }
@@ -1099,9 +1128,6 @@ layoutModeButton.addEventListener('click', () => {
   stage.classList.toggle('layout-mode', simulationPaused);
   pointerInteraction = null;
   previousFrameTime = performance.now();
-  growthStatus.textContent = simulationPaused
-    ? '拖动模式 · 模拟已暂停 · 可移动任意群落'
-    : (connections.length ? `模拟继续 · ${connections.length} 条连接` : '模拟继续 · 可建立连接');
 });
 window.addEventListener('resize', () => { resizeCanvas(); fitAllColonies(false); });
 
@@ -1110,7 +1136,7 @@ function gameLoop(realNow) {
   const renderStarted = performance.now();
   const frameDelta = Math.min(50, Math.max(0, realNow - previousFrameTime));
   previousFrameTime = realNow;
-  if (!simulationPaused) simulationTime += frameDelta;
+  if (!simulationPaused) simulationTime += frameDelta * GAME_SPEED;
   updateConnectionRetractions(simulationTime);
   updateTransfers(simulationTime);
   renderer.render(simulationTime);
@@ -1150,6 +1176,5 @@ selectedColony = originColony;
 resizeCanvas();
 updateReadout();
 fitAllColonies(false);
-growthStatus.textContent = '选择群落查看状态 · 拖动活性群落建立连接';
 for (const colony of colonies.filter(colony => colony.active)) scheduleColonyGrowth(colony);
 requestAnimationFrame(gameLoop);

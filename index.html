@@ -20,7 +20,6 @@
             <span class="legend-neutral"><i></i>失活</span>
             <span class="legend-enemy"><i></i>敌方</span>
           </div>
-          <span class="live-mark"><span id="growthStatus">拖动活性细胞以建立连接</span></span>
           <button id="layoutModeButton" class="layout-mode-button" type="button" aria-pressed="false">拖动模式</button>
         </div>
       </header>
@@ -42,12 +41,12 @@
 
         <aside class="readout" aria-live="polite">
           <div class="readout-identity"><small id="selectedFaction">我方群落</small></div>
-          <div><span id="cellCount">1 / 259</span><small>细胞</small></div>
           <div><span id="fpsCount">--</span><small>FPS</small></div>
         </aside>
 
         <aside class="colony-inspector" id="colonyInspector" aria-live="polite">
           <span class="inspector-title">COLONY STATUS</span>
+          <div><small>细胞</small><strong id="cellCount">1 / 259</strong></div>
           <div><small>LEVEL</small><strong id="generationCount">LEVEL 1</strong></div>
           <div><small>复制间隔</small><strong id="replicationRate">2s × 1</strong></div>
           <div><small>传输间隔</small><strong id="transferRate">1.75s</strong></div>
@@ -69,6 +68,6 @@
     <script src="./src/config.js"></script>
     <script src="./src/math.js"></script>
     <script src="./src/fractal.js"></script>
-    <script src="./app.js?v=refactor-domains-21"></script>
+    <script src="./app.js?v=target-paced-combat-25"></script>
   </body>
 </html>

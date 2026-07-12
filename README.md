@@ -37,6 +37,8 @@ This first version focuses on proving the visual language, growth model, and cam
 - Distance-proportional bridge costs with evenly spaced chain cells
 - Selection-based colony metadata for population, level, replication, and transfer timing
 - A faction-colored floating inspector that follows the selected colony through pan and zoom
+- Each hostile connection multiplies target replication by 75%
+- Global 1.25× simulation speed with target-paced combat budgets and one visible transfer cell per damage unit
 - Live player-versus-enemy population balance bar
 - Converted colonies combine autonomous growth with incoming link growth
 - Active colonies can reconnect in either direction after a link is cut
