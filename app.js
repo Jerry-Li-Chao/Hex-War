@@ -1,12 +1,12 @@
 const MAX_CELLS = 259;
 const FIRST_BRANCH_LENGTH = 250;
 const FRACTAL_SCALE = .32;
-const GROWTH_INTERVALS = { 1: 1500, 2: 1000, 3: 750 };
+const GROWTH_INTERVALS = { 1: 2000, 2: 1750, 3: 1500, 4: 1250 };
+const TRANSFER_INTERVALS = { 1: 1750, 2: 1500, 3: 1250, 4: 1000 };
 const MEMBRANE_TEMPLATE_COUNTS = [1, 7, 43, 259];
 const PLAYER_COLORS = ['#ff735d', '#f48667', '#ed9875', '#e4aa86'];
-const ENEMY_COLORS = ['#59b8ff', '#6fc3ff', '#8bcfff', '#a7d9ff'];
+const ENEMY_COLORS = ['#9be83f', '#aaf05a', '#baf477', '#cdf79a'];
 const INACTIVE_COLOR = '#747873';
-const MIN_CONNECTION_CELLS = 10;
 const CONNECTION_CELL_SPACING = 70;
 
 const canvas = document.querySelector('#gameCanvas');
@@ -15,6 +15,14 @@ const stage = document.querySelector('#stage');
 const countEl = document.querySelector('#cellCount');
 const generationEl = document.querySelector('#generationCount');
 const fpsEl = document.querySelector('#fpsCount');
+const selectedFactionEl = document.querySelector('#selectedFaction');
+const replicationRateEl = document.querySelector('#replicationRate');
+const transferRateEl = document.querySelector('#transferRate');
+const factionBalanceEl = document.querySelector('#factionBalance');
+const playerBalanceFill = document.querySelector('#playerBalanceFill');
+const enemyBalanceFill = document.querySelector('#enemyBalanceFill');
+const playerBalanceCount = document.querySelector('#playerBalanceCount');
+const enemyBalanceCount = document.querySelector('#enemyBalanceCount');
 const growthStatus = document.querySelector('#growthStatus');
 const layoutModeButton = document.querySelector('#layoutModeButton');
 const panHint = document.querySelector('#panHint');
@@ -43,6 +51,24 @@ function easeOutBack(value) {
 function lerp(a, b, amount) { return a + (b - a) * amount; }
 function birthKey(colony, nodeId) { return `${colony.id}:${nodeId}`; }
 
+function shuffle(items) {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
+function createGrowthOrder(nodes) {
+  const order = [0];
+  const maxDepth = Math.max(...nodes.map(node => node.depth));
+  for (let depth = 1; depth <= maxDepth; depth += 1) {
+    order.push(...shuffle(nodes.filter(node => node.depth === depth).map(node => node.id)));
+  }
+  return order;
+}
+
 class OrganismWorld {
   constructor(limit) { this.nodes = this.generate(limit); }
 
@@ -69,7 +95,19 @@ class OrganismWorld {
         queue.push(id);
       }
     }
-    return nodes;
+    // Preserve generation boundaries, but randomize births inside each generation.
+    // Since every parent is always in the previous generation, the fractal remains valid.
+    const ordered = [nodes[0]];
+    const maxDepth = Math.max(...nodes.map(node => node.depth));
+    for (let depth = 1; depth <= maxDepth; depth += 1) {
+      ordered.push(...shuffle(nodes.filter(node => node.depth === depth)));
+    }
+    const newIdByOldId = new Map(ordered.map((node, id) => [node.id, id]));
+    return ordered.map((node, id) => ({
+      ...node,
+      id,
+      parent: node.parent === null ? null : newIdByOldId.get(node.parent)
+    }));
   }
 }
 
@@ -133,20 +171,24 @@ function membraneTemplateForCount(count) {
 function createColony({ id, x, y, faction }) {
   const colony = {
     id, x, y, faction, active: faction !== null, count: 1, maxCount: 1, maxGeneration: 0,
-    membraneTemplate: 1, growthTimer: null
+    membraneTemplate: 1, growthTimer: null, nodeOrder: createGrowthOrder(world.nodes)
   };
   birthTimes.set(birthKey(colony, 0), simulationTime);
   return colony;
 }
 
 const colonies = [
-  createColony({ id: 'origin', x: -700, y: 0, faction: 'player' }),
-  createColony({ id: 'dormant', x: 700, y: 0, faction: null }),
-  createColony({ id: 'enemy', x: 2100, y: 0, faction: 'enemy' })
+  createColony({ id: 'player-1', x: -1400, y: -600, faction: 'player' }),
+  createColony({ id: 'player-2', x: -1400, y: 600, faction: 'player' }),
+  createColony({ id: 'dormant-1', x: 0, y: -1000, faction: null }),
+  createColony({ id: 'dormant-2', x: 0, y: 0, faction: null }),
+  createColony({ id: 'dormant-3', x: 0, y: 1000, faction: null }),
+  createColony({ id: 'enemy-1', x: 1400, y: -600, faction: 'enemy' }),
+  createColony({ id: 'enemy-2', x: 1400, y: 600, faction: 'enemy' })
 ];
 const originColony = colonies[0];
-const dormantColony = colonies[1];
-const enemyColony = colonies[2];
+const dormantColony = colonies[2];
+const enemyColony = colonies[5];
 
 function factionPalette(colony) {
   if (colony.faction === 'enemy') return ENEMY_COLORS;
@@ -228,50 +270,95 @@ function displayedConnectionEndpoints(activeConnection) {
   };
 }
 
+function colonyLevel(colony) {
+  if (!colony?.active) return 0;
+  if (colony.maxCount >= MAX_CELLS) return 4;
+  return clamp(Math.max(1, colony.maxGeneration), 1, 3);
+}
+
+function formatSeconds(milliseconds) {
+  return `${Number((milliseconds / 1000).toFixed(2))}s`;
+}
+
+function updateFactionBalance() {
+  const playerCells = colonies
+    .filter(colony => colony.faction === 'player')
+    .reduce((sum, colony) => sum + colony.count, 0);
+  const enemyCells = colonies
+    .filter(colony => colony.faction === 'enemy')
+    .reduce((sum, colony) => sum + colony.count, 0);
+  const activeCells = playerCells + enemyCells;
+  const playerShare = activeCells ? playerCells / activeCells * 100 : 50;
+  playerBalanceFill.style.width = `${playerShare}%`;
+  enemyBalanceFill.style.width = `${100 - playerShare}%`;
+  playerBalanceCount.textContent = `我方 ${playerCells}`;
+  enemyBalanceCount.textContent = `敌方 ${enemyCells}`;
+  factionBalanceEl.setAttribute('aria-label', `我方 ${playerCells} 个细胞，敌方 ${enemyCells} 个细胞`);
+}
+
 function updateReadout() {
-  const total = colonies.reduce((sum, colony) => sum + colony.count, 0);
-  const generation = Math.max(...colonies.filter(colony => colony.active).map(colony => colony.maxGeneration), 0);
-  countEl.textContent = String(total).padStart(2, '0');
-  generationEl.textContent = String(generation).padStart(2, '0');
+  updateFactionBalance();
+  if (!selectedColony) {
+    selectedFactionEl.textContent = '未选择群落';
+    countEl.textContent = `-- / ${MAX_CELLS}`;
+    generationEl.textContent = '--';
+    replicationRateEl.textContent = '--';
+    transferRateEl.textContent = '--';
+    return;
+  }
+  const level = colonyLevel(selectedColony);
+  selectedFactionEl.textContent = selectedColony.faction === 'player'
+    ? '我方群落'
+    : selectedColony.faction === 'enemy' ? '敌方群落' : '失活群落';
+  countEl.textContent = `${selectedColony.count} / ${MAX_CELLS}`;
+  generationEl.textContent = level ? `LEVEL ${level}` : 'DORMANT';
+  replicationRateEl.textContent = selectedColony.active
+    ? `${formatSeconds(GROWTH_INTERVALS[level])}${selectedColony.count >= MAX_CELLS ? ' · 已满' : ''}`
+    : '暂停';
+  transferRateEl.textContent = selectedColony.active ? formatSeconds(TRANSFER_INTERVALS[level]) : '不可用';
 }
 
 function changeColonyCount(colony, delta) {
   const previous = colony.count;
+  const previousLevel = colonyLevel(colony);
   const next = clamp(previous + delta, 1, MAX_CELLS);
   if (next === previous) return false;
   const now = simulationTime;
   if (next > previous) {
-    for (let nodeId = previous; nodeId < next; nodeId += 1) {
+    for (let slot = previous; slot < next; slot += 1) {
+      const nodeId = colony.nodeOrder[slot];
       birthTimes.set(birthKey(colony, nodeId), now);
     }
   }
-  const previousGeneration = colony.maxGeneration;
   colony.count = next;
   colony.maxCount = Math.max(colony.maxCount, next);
-  colony.maxGeneration = Math.max(colony.maxGeneration, world.nodes[colony.maxCount - 1].depth);
+  colony.maxGeneration = Math.max(colony.maxGeneration, world.nodes[colony.nodeOrder[colony.maxCount - 1]].depth);
   const previousTemplate = colony.membraneTemplate;
   colony.membraneTemplate = membraneTemplateForCount(colony.maxCount);
   updateReadout();
   if (colony.membraneTemplate !== previousTemplate && !cameraTouched && viewport.width > 1) {
     requestAnimationFrame(() => fitAllColonies(true));
   }
-  if (colony.maxGeneration !== previousGeneration) {
+  if (colonyLevel(colony) !== previousLevel) {
     for (const activeConnection of connections.filter(item => item.state === 'established' && item.source === colony)) {
       clearTimeout(activeConnection.transferTimer);
       updateEstablishedConnectionStatus(activeConnection, '源群落升级');
       scheduleTransfer(activeConnection);
     }
   }
+  if (delta < 0 && colony.active && !colony.growthTimer) scheduleColonyGrowth(colony);
   return true;
 }
 
 function scheduleColonyGrowth(colony) {
   clearTimeout(colony.growthTimer);
+  colony.growthTimer = null;
   if (!colony.active || colony.count >= MAX_CELLS) return;
-  const generation = Math.max(1, colony.maxGeneration || world.nodes[colony.count].depth);
-  const interval = GROWTH_INTERVALS[generation] ?? GROWTH_INTERVALS[3];
+  const generation = colonyLevel(colony);
+  const interval = GROWTH_INTERVALS[generation] ?? GROWTH_INTERVALS[4];
   colony.growthTimer = setTimeout(() => {
     runWhenSimulationActive(() => {
+      colony.growthTimer = null;
       changeColonyCount(colony, 1);
       scheduleColonyGrowth(colony);
     });
@@ -329,8 +416,8 @@ function establishConnection(source, target) {
   if (connections.some(item => item.source === source && item.target === target && item.state !== 'retracting')) return;
   const { start, end } = connectionEndpoints(source, target);
   const surfaceDistance = Math.hypot(end.x - start.x, end.y - start.y);
-  const requiredCells = Math.max(MIN_CONNECTION_CELLS, Math.ceil(surfaceDistance / CONNECTION_CELL_SPACING));
-  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, buildTimer: null, transferTimer: null };
+  const requiredCells = Math.max(2, Math.round(surfaceDistance / CONNECTION_CELL_SPACING) - 1);
+  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, surfaceDistance, buildTimer: null, transferTimer: null };
   connections.push(activeConnection);
   selectedColony = source;
   growthStatus.textContent = `建立连接 · 0 / ${requiredCells}`;
@@ -343,9 +430,9 @@ function connectionDirectionLabel(activeConnection) {
 }
 
 function transferIntervalForConnection(activeConnection) {
-  if (!activeConnection) return GROWTH_INTERVALS[1];
-  const generation = clamp(Math.max(1, activeConnection.source.maxGeneration), 1, 3);
-  return GROWTH_INTERVALS[generation];
+  if (!activeConnection) return TRANSFER_INTERVALS[1];
+  const generation = colonyLevel(activeConnection.source);
+  return TRANSFER_INTERVALS[generation];
 }
 
 function transferRateLabel(activeConnection) {
@@ -514,7 +601,8 @@ class CanvasRenderer {
     ctx.lineWidth = 1.15 / camera.zoom;
     ctx.strokeStyle = colony.active ? factionColor(colony) : INACTIVE_COLOR;
     ctx.globalAlpha = colony.active ? .52 : .4;
-    for (let nodeId = 1; nodeId < colony.count; nodeId += 1) {
+    for (let slot = 1; slot < colony.count; slot += 1) {
+      const nodeId = colony.nodeOrder[slot];
       const node = world.nodes[nodeId];
       const parent = world.nodes[node.parent];
       const nodeX = node.x + colony.x;
@@ -539,7 +627,8 @@ class CanvasRenderer {
   }
 
   drawCells(ctx, colony, now) {
-    for (let nodeId = 0; nodeId < colony.count; nodeId += 1) {
+    for (let slot = 0; slot < colony.count; slot += 1) {
+      const nodeId = colony.nodeOrder[slot];
       const node = world.nodes[nodeId];
       const x = colony.x + node.x;
       const y = colony.y + node.y;
@@ -599,7 +688,7 @@ class CanvasRenderer {
       ctx.lineTo(end.x, end.y);
       ctx.stroke();
       for (let index = 1; index <= activeConnection.requiredCells; index += 1) {
-        const initialAmount = index / activeConnection.requiredCells;
+        const initialAmount = index / (activeConnection.requiredCells + 1);
         const destination = index <= activeConnection.sourceRefund ? 0 : 1;
         const amount = lerp(initialAmount, destination, retractProgress);
         ctx.fillStyle = linkColor;
@@ -611,7 +700,7 @@ class CanvasRenderer {
       ctx.restore();
       return;
     }
-    const progress = activeConnection.state === 'building' ? activeConnection.builtCells / activeConnection.requiredCells : 1;
+    const progress = activeConnection.state === 'building' ? activeConnection.builtCells / (activeConnection.requiredCells + 1) : 1;
     const lineEnd = { x: lerp(start.x, end.x, progress), y: lerp(start.y, end.y, progress) };
     ctx.strokeStyle = linkColor;
     ctx.globalAlpha = .42;
@@ -621,7 +710,7 @@ class CanvasRenderer {
     ctx.lineTo(lineEnd.x, lineEnd.y);
     ctx.stroke();
     for (let index = 1; index <= activeConnection.builtCells; index += 1) {
-      const amount = index / activeConnection.requiredCells;
+      const amount = index / (activeConnection.requiredCells + 1);
       ctx.fillStyle = linkColor;
       ctx.globalAlpha = 1;
       ctx.beginPath();
@@ -761,14 +850,22 @@ canvas.addEventListener('pointerdown', event => {
   canvas.setPointerCapture(event.pointerId);
   if (simulationPaused && anyHit && event.button === 0) {
     selectedColony = anyHit;
+    updateReadout();
     pointerInteraction = { type: 'move-colony', colony: anyHit, offsetX: worldPoint.x - anyHit.x, offsetY: worldPoint.y - anyHit.y };
     stage.classList.add('layout-mode');
     return;
   }
   if (activeHit && event.button === 0) {
     selectedColony = activeHit;
+    updateReadout();
     pointerInteraction = { type: 'colony', source: activeHit, startX: event.clientX, startY: event.clientY, current: worldPoint, dragging: false };
     stage.classList.add('connecting');
+    return;
+  }
+  if (anyHit && event.button === 0) {
+    selectedColony = anyHit;
+    updateReadout();
+    pointerInteraction = { type: 'selection' };
     return;
   }
   if (event.button === 0 && connections.some(item => item.state === 'established') && !anyHit) {
@@ -888,11 +985,10 @@ function gameLoop(realNow) {
   requestAnimationFrame(gameLoop);
 }
 
+selectedColony = originColony;
 resizeCanvas();
 updateReadout();
 fitAllColonies(false);
-selectedColony = originColony;
-growthStatus.textContent = '珊瑚色玩家 · 蓝色敌人 · 灰色中立核心';
-scheduleColonyGrowth(originColony);
-scheduleColonyGrowth(enemyColony);
+growthStatus.textContent = '珊瑚色玩家 · 毒性绿敌人 · 灰色中立核心';
+for (const colony of colonies.filter(colony => colony.active)) scheduleColonyGrowth(colony);
 requestAnimationFrame(gameLoop);

@@ -55,12 +55,23 @@ button { font: inherit; }
 .stage.layout-mode { cursor: move; }
 #gameCanvas { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
 
-.canvas-meta { position: absolute; left: 28px; top: 22px; display: flex; gap: 18px; color: var(--accent); font-size: 8px; pointer-events: none; }
+.canvas-meta { position: absolute; left: 28px; top: 22px; color: var(--accent); font-size: 8px; pointer-events: none; }
+.faction-balance { width: 220px; }
+.balance-track { display: flex; width: 100%; height: 7px; overflow: hidden; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.035); }
+.balance-track span { display: block; height: 100%; transition: width .45s cubic-bezier(.22,.72,.25,1); }
+.balance-player { width: 50%; background: #ff735d; box-shadow: 0 0 10px rgba(255,115,93,.38); }
+.balance-enemy { width: 50%; background: #9be83f; box-shadow: 0 0 10px rgba(155,232,63,.32); }
+.balance-values { display: flex; justify-content: space-between; margin-top: 7px; color: #74776f; }
+.balance-values span:first-child { color: #c96859; }
+.balance-values span:last-child { color: #78a942; }
 .coordinates { color: #555851; }
-.readout { position: absolute; right: 30px; top: 22px; display: flex; gap: 24px; text-align: right; pointer-events: none; }
+.faction-balance .coordinates { display: block; margin-top: 6px; }
+.readout { position: absolute; right: 30px; top: 22px; display: flex; align-items: end; gap: 20px; text-align: right; pointer-events: none; }
 .readout div { display: grid; }
-.readout span { font-family: "DM Mono", monospace; font-size: 22px; font-weight: 300; }
+.readout span { font-family: "DM Mono", monospace; font-size: 15px; font-weight: 300; white-space: nowrap; }
 .readout small { color: #666861; font-size: 7px; margin-top: 3px; }
+.readout .readout-identity { align-self: center; padding-right: 18px; border-right: 1px solid rgba(255,255,255,.12); }
+.readout .readout-identity small { color: var(--accent); letter-spacing: .14em; white-space: nowrap; }
 
 .pan-hint { position: absolute; left: 28px; bottom: 28px; color: #62645d; font-size: 7px; pointer-events: none; transition: opacity .4s ease; }
 .pan-hint.hidden { opacity: 0; }
@@ -78,9 +89,12 @@ button { font: inherit; }
   .live-mark { display: none; }
   .layout-mode-button { padding: 7px 9px; }
   .canvas-meta { left: 18px; top: 18px; }
+  .faction-balance { width: 150px; }
   .coordinates { display: none; }
   .readout { right: 18px; top: 15px; }
-  .readout span { font-size: 17px; }
+  .readout { gap: 9px; }
+  .readout span { font-size: 10px; }
+  .readout .readout-identity { display: none; }
   .view-tools { right: 18px; bottom: 18px; }
   .pan-hint { left: 18px; bottom: 22px; }
 }

@@ -21,10 +21,17 @@ This first version focuses on proving the visual language, growth model, and cam
 - Dormant gray colonies that can be captured by an active colony
 - Drag-to-connect interaction from any point inside an active membrane
 - Distance-scaled cell-chain construction that consumes cells from the source colony
-- Animated generation-scaled transfer across established links (1.5s, 1s, and 0.75s)
+- Four colony levels, with level 4 unlocked by reaching the complete 259-cell organism
+- Level-scaled replication intervals of 2s, 1.75s, 1.5s, and 1.25s
+- Level-scaled transfer intervals of 1.75s, 1.5s, 1.25s, and 1s
+- Distance-proportional bridge costs with evenly spaced chain cells
+- Selection-based colony metadata for population, level, replication, and transfer timing
+- Live player-versus-enemy population balance bar
 - Converted colonies combine autonomous growth with incoming link growth
 - Active colonies can reconnect in either direction after a link is cut
-- A blue enemy faction with the same recursive growth rules as the player
+- A toxic-green enemy faction with the same recursive growth rules as the player
+- Independently randomized branch births for every colony while preserving strict generation order
+- A seven-colony starting formation: two player, three dormant, and two enemy colonies
 - Simultaneous opposing links where incoming enemy cells destroy one target cell
 - Last-cell capture that converts a defeated core to the attacker's faction
 - A pause-and-drag layout mode for repositioning colonies freely
