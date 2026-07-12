@@ -17,12 +17,14 @@ This first version focuses on proving the visual language, growth model, and cam
 
 - Recursive six-branch cellular growth
 - Autonomous growth from a single core to the complete 259-cell organism
-- Generation-specific birth timing: 1.5s, 0.75s, and 0.375s per cell
+- Generation-specific birth timing: 1.5s, 1s, and 0.75s per cell
 - Dormant gray colonies that can be captured by an active colony
 - Drag-to-connect interaction from any point inside an active membrane
-- Cell-chain construction that consumes cells from the source colony
-- Animated one-cell-per-second transfer across established links
+- Distance-scaled cell-chain construction that consumes cells from the source colony
+- Animated generation-scaled transfer across established links (1.5s, 1s, and 0.75s)
 - Converted colonies combine autonomous growth with incoming link growth
+- Active colonies can reconnect in either direction after a link is cut
+- Drag-to-cut gestures that split and return chain cells to both colonies
 - Animated cell births and branch formation
 - Multiple cell sizes that communicate hierarchy
 - An infinite-feeling, draggable world camera
@@ -57,6 +59,8 @@ No package installation or build step is required.
 - Use `+` and `−` for stepped zoom
 - Use `全览` to frame the complete organism
 - Press inside an active membrane and drag onto a gray colony to establish a link
+- After a link is established, drag across it from empty space to cut it
+- Use right- or middle-button drag to pan while a connection exists
 - Observe the organism grow autonomously; growth cannot be paused or scrubbed
 
 ## Architecture

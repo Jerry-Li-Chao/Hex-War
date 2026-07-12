@@ -1,11 +1,12 @@
 const MAX_CELLS = 259;
 const FIRST_BRANCH_LENGTH = 250;
 const FRACTAL_SCALE = .32;
-const GROWTH_INTERVALS = { 1: 1500, 2: 750, 3: 375 };
+const GROWTH_INTERVALS = { 1: 1500, 2: 1000, 3: 750 };
 const MEMBRANE_TEMPLATE_COUNTS = [1, 7, 43, 259];
 const ACTIVE_COLORS = ['#ff735d', '#f48667', '#ed9875', '#e4aa86'];
 const INACTIVE_COLOR = '#747873';
-const CONNECTION_BUILD_CELLS = 10;
+const MIN_CONNECTION_CELLS = 10;
+const CONNECTION_CELL_SPACING = 70;
 
 const canvas = document.querySelector('#gameCanvas');
 const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -134,8 +135,8 @@ function createColony({ id, x, y, active }) {
 }
 
 const colonies = [
-  createColony({ id: 'origin', x: -500, y: 0, active: true }),
-  createColony({ id: 'dormant', x: 500, y: 0, active: false })
+  createColony({ id: 'origin', x: -700, y: 0, active: true }),
+  createColony({ id: 'dormant', x: 700, y: 0, active: false })
 ];
 const originColony = colonies[0];
 const dormantColony = colonies[1];
@@ -202,6 +203,7 @@ function changeColonyCount(colony, delta) {
       birthTimes.set(birthKey(colony, nodeId), now);
     }
   }
+  const previousGeneration = colony.maxGeneration;
   colony.count = next;
   colony.maxCount = Math.max(colony.maxCount, next);
   colony.maxGeneration = Math.max(colony.maxGeneration, world.nodes[colony.maxCount - 1].depth);
@@ -210,6 +212,11 @@ function changeColonyCount(colony, delta) {
   updateReadout();
   if (colony.membraneTemplate !== previousTemplate && !cameraTouched && viewport.width > 1) {
     requestAnimationFrame(() => fitAllColonies(true));
+  }
+  if (connection?.state === 'established' && connection.source === colony && colony.maxGeneration !== previousGeneration) {
+    clearTimeout(connection.transferTimer);
+    updateEstablishedConnectionStatus('源群落升级');
+    scheduleTransfer();
   }
   return true;
 }
@@ -229,7 +236,7 @@ function activateColony(colony) {
   if (colony.active) return;
   colony.active = true;
   selectedColony = colony;
-  growthStatus.textContent = '目标已激活 · 链路输送 1 细胞 / 秒';
+  updateEstablishedConnectionStatus('目标已激活');
   scheduleColonyGrowth(colony);
 }
 
@@ -242,10 +249,10 @@ function buildConnectionStep() {
   }
   changeColonyCount(connection.source, -1);
   connection.builtCells += 1;
-  growthStatus.textContent = `建立连接 · ${connection.builtCells} / ${CONNECTION_BUILD_CELLS}`;
-  if (connection.builtCells >= CONNECTION_BUILD_CELLS) {
+  growthStatus.textContent = `建立连接 · ${connection.builtCells} / ${connection.requiredCells}`;
+  if (connection.builtCells >= connection.requiredCells) {
     connection.state = 'established';
-    growthStatus.textContent = '已建立连接 · 链路输送 1 细胞 / 秒';
+    updateEstablishedConnectionStatus('已建立连接');
     scheduleTransfer();
     return;
   }
@@ -254,10 +261,34 @@ function buildConnectionStep() {
 
 function establishConnection(source, target) {
   if (connection) return;
-  connection = { source, target, state: 'building', builtCells: 0, buildTimer: null, transferTimer: null };
+  const { start, end } = connectionEndpoints(source, target);
+  const surfaceDistance = Math.hypot(end.x - start.x, end.y - start.y);
+  const requiredCells = Math.max(MIN_CONNECTION_CELLS, Math.ceil(surfaceDistance / CONNECTION_CELL_SPACING));
+  connection = { source, target, state: 'building', builtCells: 0, requiredCells, buildTimer: null, transferTimer: null };
   selectedColony = source;
-  growthStatus.textContent = `建立连接 · 0 / ${CONNECTION_BUILD_CELLS}`;
+  growthStatus.textContent = `建立连接 · 0 / ${requiredCells}`;
   buildConnectionStep();
+}
+
+function connectionDirectionLabel(activeConnection) {
+  if (!activeConnection) return '';
+  return activeConnection.source.x <= activeConnection.target.x ? '左 → 右' : '右 → 左';
+}
+
+function transferIntervalForConnection(activeConnection) {
+  if (!activeConnection) return GROWTH_INTERVALS[1];
+  const generation = clamp(Math.max(1, activeConnection.source.maxGeneration), 1, 3);
+  return GROWTH_INTERVALS[generation];
+}
+
+function transferRateLabel(activeConnection) {
+  const seconds = transferIntervalForConnection(activeConnection) / 1000;
+  return `${String(seconds).replace(/0+$/, '').replace(/\.$/, '')}s / 细胞`;
+}
+
+function updateEstablishedConnectionStatus(prefix = '已建立连接') {
+  if (!connection) return;
+  growthStatus.textContent = `${prefix} · ${connectionDirectionLabel(connection)} · ${transferRateLabel(connection)}`;
 }
 
 function launchTransfer() {
@@ -270,10 +301,62 @@ function launchTransfer() {
 
 function scheduleTransfer() {
   if (!connection || connection.state !== 'established') return;
+  const activeConnection = connection;
+  const interval = transferIntervalForConnection(activeConnection);
+  connection.transferInterval = interval;
   connection.transferTimer = setTimeout(() => {
+    if (connection !== activeConnection || connection.state !== 'established') return;
     launchTransfer();
     scheduleTransfer();
-  }, 1000);
+  }, interval);
+}
+
+function segmentIntersectionAmount(lineStart, lineEnd, cutStart, cutEnd) {
+  const rx = lineEnd.x - lineStart.x;
+  const ry = lineEnd.y - lineStart.y;
+  const sx = cutEnd.x - cutStart.x;
+  const sy = cutEnd.y - cutStart.y;
+  const denominator = rx * sy - ry * sx;
+  if (Math.abs(denominator) < .0001) return null;
+  const qpx = cutStart.x - lineStart.x;
+  const qpy = cutStart.y - lineStart.y;
+  const lineAmount = (qpx * sy - qpy * sx) / denominator;
+  const cutAmount = (qpx * ry - qpy * rx) / denominator;
+  if (lineAmount < 0 || lineAmount > 1 || cutAmount < 0 || cutAmount > 1) return null;
+  return lineAmount;
+}
+
+function finishConnectionRetraction(activeConnection) {
+  if (connection !== activeConnection || connection.state !== 'retracting') return;
+  changeColonyCount(connection.source, connection.sourceRefund);
+  changeColonyCount(connection.target, connection.targetRefund);
+  growthStatus.textContent = `连接已切断 · 左侧返还 ${connection.leftRefund} · 右侧返还 ${connection.rightRefund} · 可重新建链`;
+  connection = null;
+}
+
+function cutConnection(amount) {
+  if (!connection || connection.state !== 'established') return;
+  clearTimeout(connection.transferTimer);
+  clearTimeout(connection.buildTimer);
+  transferParticles = [];
+  const sourceRefund = clamp(Math.round(amount * connection.requiredCells), 0, connection.requiredCells);
+  const targetRefund = connection.requiredCells - sourceRefund;
+  const sourceIsLeft = connection.source.x <= connection.target.x;
+  const leftRefund = sourceIsLeft ? sourceRefund : targetRefund;
+  const rightRefund = sourceIsLeft ? targetRefund : sourceRefund;
+  connection.state = 'retracting';
+  connection.cutAmount = amount;
+  connection.sourceRefund = sourceRefund;
+  connection.targetRefund = targetRefund;
+  connection.leftRefund = leftRefund;
+  connection.rightRefund = rightRefund;
+  connection.retractStarted = performance.now();
+  connection.retractDuration = 1440;
+  canvas.dataset.cutLeft = String(leftRefund);
+  canvas.dataset.cutRight = String(rightRefund);
+  growthStatus.textContent = `正在撤回 · 左侧 ${leftRefund} · 右侧 ${rightRefund}`;
+  const activeConnection = connection;
+  connection.retractTimer = setTimeout(() => finishConnectionRetraction(activeConnection), connection.retractDuration);
 }
 
 function updateTransfers(now) {
@@ -314,6 +397,7 @@ class CanvasRenderer {
       this.drawCells(ctx, colony, now);
     }
     this.drawDragPreview(ctx);
+    this.drawCutPreview(ctx);
     ctx.restore();
   }
 
@@ -414,7 +498,30 @@ class CanvasRenderer {
   drawConnection(ctx, now) {
     if (!connection) return;
     const { start, end } = connectionEndpoints(connection.source, connection.target);
-    const progress = connection.state === 'building' ? connection.builtCells / CONNECTION_BUILD_CELLS : 1;
+    if (connection.state === 'retracting') {
+      const retractProgress = smoothstep((now - connection.retractStarted) / connection.retractDuration);
+      const leftEndAmount = lerp(connection.cutAmount, 0, retractProgress);
+      const rightStartAmount = lerp(connection.cutAmount, 1, retractProgress);
+      ctx.strokeStyle = 'rgba(255, 142, 115, .42)';
+      ctx.lineWidth = 1.2 / camera.zoom;
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(lerp(start.x, end.x, leftEndAmount), lerp(start.y, end.y, leftEndAmount));
+      ctx.moveTo(lerp(start.x, end.x, rightStartAmount), lerp(start.y, end.y, rightStartAmount));
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      for (let index = 1; index <= connection.requiredCells; index += 1) {
+        const initialAmount = index / connection.requiredCells;
+        const destination = index <= connection.sourceRefund ? 0 : 1;
+        const amount = lerp(initialAmount, destination, retractProgress);
+        ctx.fillStyle = '#f49a77';
+        ctx.beginPath();
+        ctx.arc(lerp(start.x, end.x, amount), lerp(start.y, end.y, amount), 3 / camera.zoom, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return;
+    }
+    const progress = connection.state === 'building' ? connection.builtCells / connection.requiredCells : 1;
     const lineEnd = { x: lerp(start.x, end.x, progress), y: lerp(start.y, end.y, progress) };
     ctx.strokeStyle = 'rgba(255, 142, 115, .42)';
     ctx.lineWidth = 1.2 / camera.zoom;
@@ -423,7 +530,7 @@ class CanvasRenderer {
     ctx.lineTo(lineEnd.x, lineEnd.y);
     ctx.stroke();
     for (let index = 1; index <= connection.builtCells; index += 1) {
-      const amount = index / CONNECTION_BUILD_CELLS;
+      const amount = index / connection.requiredCells;
       ctx.fillStyle = '#f49a77';
       ctx.beginPath();
       ctx.arc(lerp(start.x, end.x, amount), lerp(start.y, end.y, amount), 3 / camera.zoom, 0, Math.PI * 2);
@@ -456,6 +563,21 @@ class CanvasRenderer {
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(target.x, target.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawCutPreview(ctx) {
+    if (!pointerInteraction || pointerInteraction.type !== 'cut' || !pointerInteraction.dragging) return;
+    const { start, current } = pointerInteraction;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(220, 236, 232, .92)';
+    ctx.lineWidth = 1.35 / camera.zoom;
+    ctx.shadowColor = '#dcece8';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(current.x, current.y);
     ctx.stroke();
     ctx.restore();
   }
@@ -541,11 +663,17 @@ function colonyAtPoint(point, predicate = () => true) {
 canvas.addEventListener('pointerdown', event => {
   const worldPoint = screenToWorld(event.clientX, event.clientY);
   const activeHit = colonyAtPoint(worldPoint, colony => colony.active);
+  const anyHit = colonyAtPoint(worldPoint);
   canvas.setPointerCapture(event.pointerId);
   if (activeHit && !connection) {
     selectedColony = activeHit;
     pointerInteraction = { type: 'colony', source: activeHit, startX: event.clientX, startY: event.clientY, current: worldPoint, dragging: false };
     stage.classList.add('connecting');
+    return;
+  }
+  if (event.button === 0 && connection?.state === 'established' && !anyHit) {
+    pointerInteraction = { type: 'cut', startX: event.clientX, startY: event.clientY, start: worldPoint, current: worldPoint, dragging: false };
+    stage.classList.add('cutting');
     return;
   }
   pointerInteraction = { type: 'pan', startX: event.clientX, startY: event.clientY, cameraX: camera.x, cameraY: camera.y };
@@ -555,6 +683,11 @@ canvas.addEventListener('pointerdown', event => {
 canvas.addEventListener('pointermove', event => {
   if (!pointerInteraction) return;
   if (pointerInteraction.type === 'colony') {
+    pointerInteraction.current = screenToWorld(event.clientX, event.clientY);
+    pointerInteraction.dragging = pointerInteraction.dragging || Math.hypot(event.clientX - pointerInteraction.startX, event.clientY - pointerInteraction.startY) > 6;
+    return;
+  }
+  if (pointerInteraction.type === 'cut') {
     pointerInteraction.current = screenToWorld(event.clientX, event.clientY);
     pointerInteraction.dragging = pointerInteraction.dragging || Math.hypot(event.clientX - pointerInteraction.startX, event.clientY - pointerInteraction.startY) > 6;
     return;
@@ -570,18 +703,23 @@ function finishPointerInteraction(event) {
   if (!pointerInteraction) return;
   if (pointerInteraction.type === 'colony' && pointerInteraction.dragging) {
     const dropPoint = screenToWorld(event.clientX, event.clientY);
-    const target = colonyAtPoint(dropPoint, colony => !colony.active && colony !== pointerInteraction.source);
+    const target = colonyAtPoint(dropPoint, colony => colony !== pointerInteraction.source);
     if (target) establishConnection(pointerInteraction.source, target);
+  } else if (pointerInteraction.type === 'cut' && pointerInteraction.dragging && connection?.state === 'established') {
+    const { start, end } = connectionEndpoints(connection.source, connection.target);
+    const amount = segmentIntersectionAmount(start, end, pointerInteraction.start, pointerInteraction.current);
+    if (amount !== null) cutConnection(amount);
   }
   pointerInteraction = null;
-  stage.classList.remove('dragging', 'connecting');
+  stage.classList.remove('dragging', 'connecting', 'cutting');
 }
 
 canvas.addEventListener('pointerup', finishPointerInteraction);
 canvas.addEventListener('pointercancel', () => {
   pointerInteraction = null;
-  stage.classList.remove('dragging', 'connecting');
+  stage.classList.remove('dragging', 'connecting', 'cutting');
 });
+canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
   zoomAt(event.deltaY > 0 ? .9 : 1.1, event.clientX, event.clientY);
@@ -607,6 +745,10 @@ function gameLoop(now) {
     canvas.dataset.originCells = String(originColony.count);
     canvas.dataset.targetCells = String(dormantColony.count);
     canvas.dataset.targetActive = String(dormantColony.active);
+    canvas.dataset.connectionSource = connection?.source.id ?? 'none';
+    canvas.dataset.connectionTarget = connection?.target.id ?? 'none';
+    canvas.dataset.requiredCells = String(connection?.requiredCells ?? 0);
+    canvas.dataset.transferInterval = String(connection?.transferInterval ?? 0);
     fpsSample = { started: now, frames: 0 };
   }
   requestAnimationFrame(gameLoop);
