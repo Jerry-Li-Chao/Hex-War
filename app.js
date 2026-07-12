@@ -3,7 +3,8 @@ const FIRST_BRANCH_LENGTH = 250;
 const FRACTAL_SCALE = .32;
 const GROWTH_INTERVALS = { 1: 1500, 2: 1000, 3: 750 };
 const MEMBRANE_TEMPLATE_COUNTS = [1, 7, 43, 259];
-const ACTIVE_COLORS = ['#ff735d', '#f48667', '#ed9875', '#e4aa86'];
+const PLAYER_COLORS = ['#ff735d', '#f48667', '#ed9875', '#e4aa86'];
+const ENEMY_COLORS = ['#59b8ff', '#6fc3ff', '#8bcfff', '#a7d9ff'];
 const INACTIVE_COLOR = '#747873';
 const MIN_CONNECTION_CELLS = 10;
 const CONNECTION_CELL_SPACING = 70;
@@ -15,6 +16,7 @@ const countEl = document.querySelector('#cellCount');
 const generationEl = document.querySelector('#generationCount');
 const fpsEl = document.querySelector('#fpsCount');
 const growthStatus = document.querySelector('#growthStatus');
+const layoutModeButton = document.querySelector('#layoutModeButton');
 const panHint = document.querySelector('#panHint');
 const coordinates = document.querySelector('#coordinates');
 
@@ -23,8 +25,11 @@ let camera = { x: 0, y: 0, zoom: 1 };
 let cameraTouched = false;
 let pointerInteraction = null;
 let selectedColony = null;
-let connection = null;
+let connections = [];
 let transferParticles = [];
+let simulationPaused = false;
+let simulationTime = 0;
+let previousFrameTime = performance.now();
 let fpsSample = { started: performance.now(), frames: 0 };
 let averageRenderMs = 0;
 const birthTimes = new Map();
@@ -125,21 +130,41 @@ function membraneTemplateForCount(count) {
   return MEMBRANE_TEMPLATE_COUNTS.find(templateCount => count <= templateCount) ?? MAX_CELLS;
 }
 
-function createColony({ id, x, y, active }) {
+function createColony({ id, x, y, faction }) {
   const colony = {
-    id, x, y, active, count: 1, maxCount: 1, maxGeneration: 0,
+    id, x, y, faction, active: faction !== null, count: 1, maxCount: 1, maxGeneration: 0,
     membraneTemplate: 1, growthTimer: null
   };
-  birthTimes.set(birthKey(colony, 0), performance.now());
+  birthTimes.set(birthKey(colony, 0), simulationTime);
   return colony;
 }
 
 const colonies = [
-  createColony({ id: 'origin', x: -700, y: 0, active: true }),
-  createColony({ id: 'dormant', x: 700, y: 0, active: false })
+  createColony({ id: 'origin', x: -700, y: 0, faction: 'player' }),
+  createColony({ id: 'dormant', x: 700, y: 0, faction: null }),
+  createColony({ id: 'enemy', x: 2100, y: 0, faction: 'enemy' })
 ];
 const originColony = colonies[0];
 const dormantColony = colonies[1];
+const enemyColony = colonies[2];
+
+function factionPalette(colony) {
+  if (colony.faction === 'enemy') return ENEMY_COLORS;
+  if (colony.faction === 'player') return PLAYER_COLORS;
+  return [INACTIVE_COLOR, INACTIVE_COLOR, INACTIVE_COLOR, INACTIVE_COLOR];
+}
+
+function factionColor(colony) {
+  return factionPalette(colony)[0];
+}
+
+function runWhenSimulationActive(callback) {
+  if (simulationPaused) {
+    setTimeout(() => runWhenSimulationActive(callback), 100);
+    return;
+  }
+  callback();
+}
 
 function localMembranePoints(colony) {
   return membraneTemplates.get(colony.membraneTemplate);
@@ -186,6 +211,23 @@ function connectionEndpoints(source, target) {
   };
 }
 
+function displayedConnectionEndpoints(activeConnection) {
+  const endpoints = connectionEndpoints(activeConnection.source, activeConnection.target);
+  const reverseExists = connections.some(item => item !== activeConnection
+    && item.source === activeConnection.target
+    && item.target === activeConnection.source
+    && item.state !== 'retracting');
+  if (!reverseExists) return endpoints;
+  const dx = endpoints.end.x - endpoints.start.x;
+  const dy = endpoints.end.y - endpoints.start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const offset = 7 / camera.zoom;
+  return {
+    start: { x: endpoints.start.x - dy / length * offset, y: endpoints.start.y + dx / length * offset },
+    end: { x: endpoints.end.x - dy / length * offset, y: endpoints.end.y + dx / length * offset }
+  };
+}
+
 function updateReadout() {
   const total = colonies.reduce((sum, colony) => sum + colony.count, 0);
   const generation = Math.max(...colonies.filter(colony => colony.active).map(colony => colony.maxGeneration), 0);
@@ -197,7 +239,7 @@ function changeColonyCount(colony, delta) {
   const previous = colony.count;
   const next = clamp(previous + delta, 1, MAX_CELLS);
   if (next === previous) return false;
-  const now = performance.now();
+  const now = simulationTime;
   if (next > previous) {
     for (let nodeId = previous; nodeId < next; nodeId += 1) {
       birthTimes.set(birthKey(colony, nodeId), now);
@@ -213,10 +255,12 @@ function changeColonyCount(colony, delta) {
   if (colony.membraneTemplate !== previousTemplate && !cameraTouched && viewport.width > 1) {
     requestAnimationFrame(() => fitAllColonies(true));
   }
-  if (connection?.state === 'established' && connection.source === colony && colony.maxGeneration !== previousGeneration) {
-    clearTimeout(connection.transferTimer);
-    updateEstablishedConnectionStatus('源群落升级');
-    scheduleTransfer();
+  if (colony.maxGeneration !== previousGeneration) {
+    for (const activeConnection of connections.filter(item => item.state === 'established' && item.source === colony)) {
+      clearTimeout(activeConnection.transferTimer);
+      updateEstablishedConnectionStatus(activeConnection, '源群落升级');
+      scheduleTransfer(activeConnection);
+    }
   }
   return true;
 }
@@ -227,47 +271,70 @@ function scheduleColonyGrowth(colony) {
   const generation = Math.max(1, colony.maxGeneration || world.nodes[colony.count].depth);
   const interval = GROWTH_INTERVALS[generation] ?? GROWTH_INTERVALS[3];
   colony.growthTimer = setTimeout(() => {
-    changeColonyCount(colony, 1);
-    scheduleColonyGrowth(colony);
+    runWhenSimulationActive(() => {
+      changeColonyCount(colony, 1);
+      scheduleColonyGrowth(colony);
+    });
   }, interval);
 }
 
-function activateColony(colony) {
+function activateColony(colony, faction, activeConnection) {
   if (colony.active) return;
   colony.active = true;
+  colony.faction = faction;
   selectedColony = colony;
-  updateEstablishedConnectionStatus('目标已激活');
+  updateEstablishedConnectionStatus(activeConnection, '目标已激活');
   scheduleColonyGrowth(colony);
 }
 
-function buildConnectionStep() {
-  if (!connection || connection.state !== 'building') return;
-  if (connection.source.count <= 1) {
+function captureColony(colony, faction, activeConnection) {
+  clearTimeout(colony.growthTimer);
+  colony.faction = faction;
+  colony.active = true;
+  colony.count = 1;
+  colony.maxCount = 1;
+  colony.maxGeneration = 0;
+  colony.membraneTemplate = 1;
+  birthTimes.set(birthKey(colony, 0), simulationTime);
+  selectedColony = colony;
+  updateReadout();
+  updateEstablishedConnectionStatus(activeConnection, '核心已占领');
+  scheduleColonyGrowth(colony);
+}
+
+function buildConnectionStep(activeConnection) {
+  if (!connections.includes(activeConnection) || activeConnection.state !== 'building') return;
+  if (simulationPaused) {
+    activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), 100);
+    return;
+  }
+  if (activeConnection.source.count <= 1) {
     growthStatus.textContent = '源细胞不足 · 等待自我增殖';
-    connection.buildTimer = setTimeout(buildConnectionStep, 220);
+    activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), 220);
     return;
   }
-  changeColonyCount(connection.source, -1);
-  connection.builtCells += 1;
-  growthStatus.textContent = `建立连接 · ${connection.builtCells} / ${connection.requiredCells}`;
-  if (connection.builtCells >= connection.requiredCells) {
-    connection.state = 'established';
-    updateEstablishedConnectionStatus('已建立连接');
-    scheduleTransfer();
+  changeColonyCount(activeConnection.source, -1);
+  activeConnection.builtCells += 1;
+  growthStatus.textContent = `建立连接 · ${activeConnection.builtCells} / ${activeConnection.requiredCells}`;
+  if (activeConnection.builtCells >= activeConnection.requiredCells) {
+    activeConnection.state = 'established';
+    updateEstablishedConnectionStatus(activeConnection, '已建立连接');
+    scheduleTransfer(activeConnection);
     return;
   }
-  connection.buildTimer = setTimeout(buildConnectionStep, 160);
+  activeConnection.buildTimer = setTimeout(() => buildConnectionStep(activeConnection), 160);
 }
 
 function establishConnection(source, target) {
-  if (connection) return;
+  if (connections.some(item => item.source === source && item.target === target && item.state !== 'retracting')) return;
   const { start, end } = connectionEndpoints(source, target);
   const surfaceDistance = Math.hypot(end.x - start.x, end.y - start.y);
   const requiredCells = Math.max(MIN_CONNECTION_CELLS, Math.ceil(surfaceDistance / CONNECTION_CELL_SPACING));
-  connection = { source, target, state: 'building', builtCells: 0, requiredCells, buildTimer: null, transferTimer: null };
+  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, buildTimer: null, transferTimer: null };
+  connections.push(activeConnection);
   selectedColony = source;
   growthStatus.textContent = `建立连接 · 0 / ${requiredCells}`;
-  buildConnectionStep();
+  buildConnectionStep(activeConnection);
 }
 
 function connectionDirectionLabel(activeConnection) {
@@ -286,28 +353,30 @@ function transferRateLabel(activeConnection) {
   return `${String(seconds).replace(/0+$/, '').replace(/\.$/, '')}s / 细胞`;
 }
 
-function updateEstablishedConnectionStatus(prefix = '已建立连接') {
-  if (!connection) return;
-  growthStatus.textContent = `${prefix} · ${connectionDirectionLabel(connection)} · ${transferRateLabel(connection)}`;
+function updateEstablishedConnectionStatus(activeConnection, prefix = '已建立连接') {
+  if (!activeConnection) return;
+  growthStatus.textContent = `${prefix} · ${connectionDirectionLabel(activeConnection)} · ${transferRateLabel(activeConnection)}`;
 }
 
-function launchTransfer() {
-  if (!connection || connection.state !== 'established') return;
-  const { source, target } = connection;
-  if (source.count <= 1 || target.count >= MAX_CELLS) return;
+function launchTransfer(activeConnection) {
+  if (!connections.includes(activeConnection) || activeConnection.state !== 'established') return;
+  const { source, target } = activeConnection;
+  const sameFaction = source.faction === target.faction;
+  if (source.count <= 1 || (sameFaction && target.count >= MAX_CELLS)) return;
   changeColonyCount(source, -1);
-  transferParticles.push({ source, target, started: performance.now(), duration: 820 });
+  transferParticles.push({ connection: activeConnection, source, target, faction: source.faction, started: simulationTime, duration: 820 });
 }
 
-function scheduleTransfer() {
-  if (!connection || connection.state !== 'established') return;
-  const activeConnection = connection;
+function scheduleTransfer(activeConnection) {
+  if (!connections.includes(activeConnection) || activeConnection.state !== 'established') return;
   const interval = transferIntervalForConnection(activeConnection);
-  connection.transferInterval = interval;
-  connection.transferTimer = setTimeout(() => {
-    if (connection !== activeConnection || connection.state !== 'established') return;
-    launchTransfer();
-    scheduleTransfer();
+  activeConnection.transferInterval = interval;
+  activeConnection.transferTimer = setTimeout(() => {
+    runWhenSimulationActive(() => {
+      if (!connections.includes(activeConnection) || activeConnection.state !== 'established') return;
+      launchTransfer(activeConnection);
+      scheduleTransfer(activeConnection);
+    });
   }, interval);
 }
 
@@ -327,44 +396,60 @@ function segmentIntersectionAmount(lineStart, lineEnd, cutStart, cutEnd) {
 }
 
 function finishConnectionRetraction(activeConnection) {
-  if (connection !== activeConnection || connection.state !== 'retracting') return;
-  changeColonyCount(connection.source, connection.sourceRefund);
-  changeColonyCount(connection.target, connection.targetRefund);
-  growthStatus.textContent = `连接已切断 · 左侧返还 ${connection.leftRefund} · 右侧返还 ${connection.rightRefund} · 可重新建链`;
-  connection = null;
+  if (!connections.includes(activeConnection) || activeConnection.state !== 'retracting') return;
+  changeColonyCount(activeConnection.source, activeConnection.sourceRefund);
+  changeColonyCount(activeConnection.target, activeConnection.targetRefund);
+  growthStatus.textContent = `连接已切断 · 左侧返还 ${activeConnection.leftRefund} · 右侧返还 ${activeConnection.rightRefund} · 可重新建链`;
+  connections = connections.filter(item => item !== activeConnection);
 }
 
-function cutConnection(amount) {
-  if (!connection || connection.state !== 'established') return;
-  clearTimeout(connection.transferTimer);
-  clearTimeout(connection.buildTimer);
-  transferParticles = [];
-  const sourceRefund = clamp(Math.round(amount * connection.requiredCells), 0, connection.requiredCells);
-  const targetRefund = connection.requiredCells - sourceRefund;
-  const sourceIsLeft = connection.source.x <= connection.target.x;
+function cutConnection(activeConnection, amount) {
+  if (!connections.includes(activeConnection) || activeConnection.state !== 'established') return;
+  clearTimeout(activeConnection.transferTimer);
+  clearTimeout(activeConnection.buildTimer);
+  transferParticles = transferParticles.filter(particle => particle.connection !== activeConnection);
+  const sourceRefund = clamp(Math.round(amount * activeConnection.requiredCells), 0, activeConnection.requiredCells);
+  const targetRefund = activeConnection.requiredCells - sourceRefund;
+  const sourceIsLeft = activeConnection.source.x <= activeConnection.target.x;
   const leftRefund = sourceIsLeft ? sourceRefund : targetRefund;
   const rightRefund = sourceIsLeft ? targetRefund : sourceRefund;
-  connection.state = 'retracting';
-  connection.cutAmount = amount;
-  connection.sourceRefund = sourceRefund;
-  connection.targetRefund = targetRefund;
-  connection.leftRefund = leftRefund;
-  connection.rightRefund = rightRefund;
-  connection.retractStarted = performance.now();
-  connection.retractDuration = 1440;
+  activeConnection.state = 'retracting';
+  activeConnection.cutAmount = amount;
+  activeConnection.sourceRefund = sourceRefund;
+  activeConnection.targetRefund = targetRefund;
+  activeConnection.leftRefund = leftRefund;
+  activeConnection.rightRefund = rightRefund;
+  activeConnection.retractStarted = simulationTime;
+  activeConnection.retractDuration = 1440;
   canvas.dataset.cutLeft = String(leftRefund);
   canvas.dataset.cutRight = String(rightRefund);
   growthStatus.textContent = `正在撤回 · 左侧 ${leftRefund} · 右侧 ${rightRefund}`;
-  const activeConnection = connection;
-  connection.retractTimer = setTimeout(() => finishConnectionRetraction(activeConnection), connection.retractDuration);
+}
+
+function updateConnectionRetractions(now) {
+  for (const activeConnection of [...connections]) {
+    if (activeConnection.state === 'retracting' && now - activeConnection.retractStarted >= activeConnection.retractDuration) {
+      finishConnectionRetraction(activeConnection);
+    }
+  }
 }
 
 function updateTransfers(now) {
   const remaining = [];
   for (const particle of transferParticles) {
     if (now - particle.started >= particle.duration) {
-      activateColony(particle.target);
-      changeColonyCount(particle.target, 1);
+      const { target } = particle;
+      if (!target.active) {
+        activateColony(target, particle.faction, particle.connection);
+        changeColonyCount(target, 1);
+      } else if (target.faction === particle.faction) {
+        changeColonyCount(target, 1);
+      } else if (target.count > 1) {
+        changeColonyCount(target, -1);
+        growthStatus.textContent = `交战 · ${particle.source.faction === 'enemy' ? '敌人' : '玩家'}消灭目标 1 个细胞`;
+      } else {
+        captureColony(target, particle.faction, particle.connection);
+      }
     } else {
       remaining.push(particle);
     }
@@ -391,7 +476,7 @@ class CanvasRenderer {
     ctx.scale(camera.zoom, camera.zoom);
     ctx.translate(-camera.x, -camera.y);
     for (const colony of colonies) this.drawMembrane(ctx, colony);
-    this.drawConnection(ctx, now);
+    for (const activeConnection of connections) this.drawConnection(ctx, now, activeConnection);
     for (const colony of colonies) {
       this.drawBranches(ctx, colony, now);
       this.drawCells(ctx, colony, now);
@@ -411,14 +496,12 @@ class CanvasRenderer {
     ctx.moveTo(points[0].x, points[0].y);
     for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index].x, points[index].y);
     ctx.closePath();
-    ctx.strokeStyle = active
-      ? `rgba(255, 115, 93, ${selected ? .16 : .08})`
-      : 'rgba(150, 155, 151, .09)';
+    ctx.strokeStyle = active ? factionColor(colony) : INACTIVE_COLOR;
+    ctx.globalAlpha = selected ? .16 : .08;
     ctx.lineWidth = (selected ? 4 : 3) / camera.zoom;
     ctx.stroke();
-    ctx.strokeStyle = active
-      ? `rgba(255, 160, 136, ${selected ? .78 : .48})`
-      : 'rgba(174, 180, 175, .42)';
+    ctx.strokeStyle = active ? factionColor(colony) : INACTIVE_COLOR;
+    ctx.globalAlpha = active ? (selected ? .78 : .48) : .42;
     ctx.lineWidth = (selected ? 1.25 : .8) / camera.zoom;
     ctx.stroke();
     ctx.restore();
@@ -426,9 +509,11 @@ class CanvasRenderer {
 
   drawBranches(ctx, colony, now) {
     if (!colony.active && colony.count === 1) return;
+    ctx.save();
     ctx.lineCap = 'round';
     ctx.lineWidth = 1.15 / camera.zoom;
-    ctx.strokeStyle = colony.active ? 'rgba(246, 169, 135, .52)' : 'rgba(150, 155, 151, .4)';
+    ctx.strokeStyle = colony.active ? factionColor(colony) : INACTIVE_COLOR;
+    ctx.globalAlpha = colony.active ? .52 : .4;
     for (let nodeId = 1; nodeId < colony.count; nodeId += 1) {
       const node = world.nodes[nodeId];
       const parent = world.nodes[node.parent];
@@ -450,6 +535,7 @@ class CanvasRenderer {
       ctx.lineTo(lerp(sx, ex, progress), lerp(sy, ey, progress));
       ctx.stroke();
     }
+    ctx.restore();
   }
 
   drawCells(ctx, colony, now) {
@@ -460,7 +546,7 @@ class CanvasRenderer {
       if (!isWorldPointInView(x, y, 50)) continue;
       const raw = clamp((now - birthTimes.get(birthKey(colony, nodeId))) / 430, 0, 1);
       const scale = easeOutBack(raw);
-      const color = colony.active ? ACTIVE_COLORS[Math.min(node.depth, ACTIVE_COLORS.length - 1)] : INACTIVE_COLOR;
+      const color = factionPalette(colony)[Math.min(node.depth, 3)];
       const pulse = nodeId === 0 && colony.active ? 1 + Math.sin(now * .0025) * .025 : 1;
       const radius = node.radius * scale * pulse;
       ctx.save();
@@ -495,14 +581,16 @@ class CanvasRenderer {
     }
   }
 
-  drawConnection(ctx, now) {
-    if (!connection) return;
-    const { start, end } = connectionEndpoints(connection.source, connection.target);
-    if (connection.state === 'retracting') {
-      const retractProgress = smoothstep((now - connection.retractStarted) / connection.retractDuration);
-      const leftEndAmount = lerp(connection.cutAmount, 0, retractProgress);
-      const rightStartAmount = lerp(connection.cutAmount, 1, retractProgress);
-      ctx.strokeStyle = 'rgba(255, 142, 115, .42)';
+  drawConnection(ctx, now, activeConnection) {
+    ctx.save();
+    const { start, end } = displayedConnectionEndpoints(activeConnection);
+    const linkColor = factionColor(activeConnection.source);
+    if (activeConnection.state === 'retracting') {
+      const retractProgress = smoothstep((now - activeConnection.retractStarted) / activeConnection.retractDuration);
+      const leftEndAmount = lerp(activeConnection.cutAmount, 0, retractProgress);
+      const rightStartAmount = lerp(activeConnection.cutAmount, 1, retractProgress);
+      ctx.strokeStyle = linkColor;
+      ctx.globalAlpha = .42;
       ctx.lineWidth = 1.2 / camera.zoom;
       ctx.beginPath();
       ctx.moveTo(start.x, start.y);
@@ -510,45 +598,50 @@ class CanvasRenderer {
       ctx.moveTo(lerp(start.x, end.x, rightStartAmount), lerp(start.y, end.y, rightStartAmount));
       ctx.lineTo(end.x, end.y);
       ctx.stroke();
-      for (let index = 1; index <= connection.requiredCells; index += 1) {
-        const initialAmount = index / connection.requiredCells;
-        const destination = index <= connection.sourceRefund ? 0 : 1;
+      for (let index = 1; index <= activeConnection.requiredCells; index += 1) {
+        const initialAmount = index / activeConnection.requiredCells;
+        const destination = index <= activeConnection.sourceRefund ? 0 : 1;
         const amount = lerp(initialAmount, destination, retractProgress);
-        ctx.fillStyle = '#f49a77';
+        ctx.fillStyle = linkColor;
+        ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(lerp(start.x, end.x, amount), lerp(start.y, end.y, amount), 3 / camera.zoom, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.restore();
       return;
     }
-    const progress = connection.state === 'building' ? connection.builtCells / connection.requiredCells : 1;
+    const progress = activeConnection.state === 'building' ? activeConnection.builtCells / activeConnection.requiredCells : 1;
     const lineEnd = { x: lerp(start.x, end.x, progress), y: lerp(start.y, end.y, progress) };
-    ctx.strokeStyle = 'rgba(255, 142, 115, .42)';
+    ctx.strokeStyle = linkColor;
+    ctx.globalAlpha = .42;
     ctx.lineWidth = 1.2 / camera.zoom;
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(lineEnd.x, lineEnd.y);
     ctx.stroke();
-    for (let index = 1; index <= connection.builtCells; index += 1) {
-      const amount = index / connection.requiredCells;
-      ctx.fillStyle = '#f49a77';
+    for (let index = 1; index <= activeConnection.builtCells; index += 1) {
+      const amount = index / activeConnection.requiredCells;
+      ctx.fillStyle = linkColor;
+      ctx.globalAlpha = 1;
       ctx.beginPath();
       ctx.arc(lerp(start.x, end.x, amount), lerp(start.y, end.y, amount), 3 / camera.zoom, 0, Math.PI * 2);
       ctx.fill();
     }
-    for (const particle of transferParticles) {
+    for (const particle of transferParticles.filter(item => item.connection === activeConnection)) {
       const amount = smoothstep((now - particle.started) / particle.duration);
       const x = lerp(start.x, end.x, amount);
       const y = lerp(start.y, end.y, amount);
       ctx.save();
-      ctx.fillStyle = '#ff735d';
-      ctx.shadowColor = '#ff735d';
+      ctx.fillStyle = factionColor(particle.source);
+      ctx.shadowColor = factionColor(particle.source);
       ctx.shadowBlur = 14;
       ctx.beginPath();
       ctx.arc(x, y, 5 / camera.zoom, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
+    ctx.restore();
   }
 
   drawDragPreview(ctx) {
@@ -557,7 +650,8 @@ class CanvasRenderer {
     const target = pointerInteraction.current;
     const start = supportPoint(source, target.x - source.x, target.y - source.y);
     ctx.save();
-    ctx.strokeStyle = 'rgba(255, 115, 93, .7)';
+    ctx.strokeStyle = factionColor(source);
+    ctx.globalAlpha = .7;
     ctx.lineWidth = 1.2 / camera.zoom;
     ctx.setLineDash([6 / camera.zoom, 6 / camera.zoom]);
     ctx.beginPath();
@@ -609,7 +703,7 @@ function fitAllColonies(animate = false) {
   const target = {
     x: (bounds.left + bounds.right) / 2,
     y: (bounds.top + bounds.bottom) / 2,
-    zoom: clamp(Math.min((viewport.width - 180) / Math.max(300, bounds.right - bounds.left), (viewport.height - 160) / Math.max(260, bounds.bottom - bounds.top)), .25, 1.55)
+    zoom: clamp(Math.min((viewport.width - 180) / Math.max(300, bounds.right - bounds.left), (viewport.height - 160) / Math.max(260, bounds.bottom - bounds.top)), .12, 1.55)
   };
   if (!animate) {
     camera = target;
@@ -647,7 +741,7 @@ function zoomAt(factor, clientX, clientY) {
   const x = clientX ?? rect.left + viewport.width / 2;
   const y = clientY ?? rect.top + viewport.height / 2;
   const before = screenToWorld(x, y);
-  camera.zoom = clamp(camera.zoom * factor, .2, 2.8);
+  camera.zoom = clamp(camera.zoom * factor, .1, 2.8);
   const after = screenToWorld(x, y);
   camera.x += before.x - after.x;
   camera.y += before.y - after.y;
@@ -665,13 +759,19 @@ canvas.addEventListener('pointerdown', event => {
   const activeHit = colonyAtPoint(worldPoint, colony => colony.active);
   const anyHit = colonyAtPoint(worldPoint);
   canvas.setPointerCapture(event.pointerId);
-  if (activeHit && !connection) {
+  if (simulationPaused && anyHit && event.button === 0) {
+    selectedColony = anyHit;
+    pointerInteraction = { type: 'move-colony', colony: anyHit, offsetX: worldPoint.x - anyHit.x, offsetY: worldPoint.y - anyHit.y };
+    stage.classList.add('layout-mode');
+    return;
+  }
+  if (activeHit && event.button === 0) {
     selectedColony = activeHit;
     pointerInteraction = { type: 'colony', source: activeHit, startX: event.clientX, startY: event.clientY, current: worldPoint, dragging: false };
     stage.classList.add('connecting');
     return;
   }
-  if (event.button === 0 && connection?.state === 'established' && !anyHit) {
+  if (event.button === 0 && connections.some(item => item.state === 'established') && !anyHit) {
     pointerInteraction = { type: 'cut', startX: event.clientX, startY: event.clientY, start: worldPoint, current: worldPoint, dragging: false };
     stage.classList.add('cutting');
     return;
@@ -685,6 +785,12 @@ canvas.addEventListener('pointermove', event => {
   if (pointerInteraction.type === 'colony') {
     pointerInteraction.current = screenToWorld(event.clientX, event.clientY);
     pointerInteraction.dragging = pointerInteraction.dragging || Math.hypot(event.clientX - pointerInteraction.startX, event.clientY - pointerInteraction.startY) > 6;
+    return;
+  }
+  if (pointerInteraction.type === 'move-colony') {
+    const worldPoint = screenToWorld(event.clientX, event.clientY);
+    pointerInteraction.colony.x = worldPoint.x - pointerInteraction.offsetX;
+    pointerInteraction.colony.y = worldPoint.y - pointerInteraction.offsetY;
     return;
   }
   if (pointerInteraction.type === 'cut') {
@@ -705,10 +811,12 @@ function finishPointerInteraction(event) {
     const dropPoint = screenToWorld(event.clientX, event.clientY);
     const target = colonyAtPoint(dropPoint, colony => colony !== pointerInteraction.source);
     if (target) establishConnection(pointerInteraction.source, target);
-  } else if (pointerInteraction.type === 'cut' && pointerInteraction.dragging && connection?.state === 'established') {
-    const { start, end } = connectionEndpoints(connection.source, connection.target);
-    const amount = segmentIntersectionAmount(start, end, pointerInteraction.start, pointerInteraction.current);
-    if (amount !== null) cutConnection(amount);
+  } else if (pointerInteraction.type === 'cut' && pointerInteraction.dragging) {
+    for (const activeConnection of connections.filter(item => item.state === 'established')) {
+      const { start, end } = displayedConnectionEndpoints(activeConnection);
+      const amount = segmentIntersectionAmount(start, end, pointerInteraction.start, pointerInteraction.current);
+      if (amount !== null) cutConnection(activeConnection, amount);
+    }
   }
   pointerInteraction = null;
   stage.classList.remove('dragging', 'connecting', 'cutting');
@@ -728,28 +836,54 @@ canvas.addEventListener('wheel', event => {
 document.querySelector('#zoomIn').addEventListener('click', () => zoomAt(1.2));
 document.querySelector('#zoomOut').addEventListener('click', () => zoomAt(.82));
 document.querySelector('#resetView').addEventListener('click', () => { cameraTouched = false; fitAllColonies(true); });
+layoutModeButton.addEventListener('click', () => {
+  simulationPaused = !simulationPaused;
+  layoutModeButton.classList.toggle('active', simulationPaused);
+  layoutModeButton.setAttribute('aria-pressed', String(simulationPaused));
+  stage.classList.toggle('layout-mode', simulationPaused);
+  pointerInteraction = null;
+  previousFrameTime = performance.now();
+  growthStatus.textContent = simulationPaused
+    ? '拖动模式 · 模拟已暂停 · 可移动任意群落'
+    : (connections.length ? `模拟继续 · ${connections.length} 条连接` : '模拟继续 · 可建立连接');
+});
 window.addEventListener('resize', () => { resizeCanvas(); fitAllColonies(false); });
 
-function gameLoop(now) {
+function gameLoop(realNow) {
   const renderStarted = performance.now();
-  updateTransfers(now);
-  renderer.render(now);
+  const frameDelta = Math.min(50, Math.max(0, realNow - previousFrameTime));
+  previousFrameTime = realNow;
+  if (!simulationPaused) simulationTime += frameDelta;
+  updateConnectionRetractions(simulationTime);
+  updateTransfers(simulationTime);
+  renderer.render(simulationTime);
   const renderDuration = performance.now() - renderStarted;
   averageRenderMs = averageRenderMs ? averageRenderMs * .94 + renderDuration * .06 : renderDuration;
   fpsSample.frames += 1;
-  const elapsed = now - fpsSample.started;
+  const elapsed = realNow - fpsSample.started;
   if (elapsed >= 500) {
     fpsEl.textContent = String(Math.round(fpsSample.frames * 1000 / elapsed));
     canvas.dataset.renderMs = averageRenderMs.toFixed(2);
-    canvas.dataset.connectionState = connection?.state ?? 'none';
+    const primaryConnection = connections[0];
+    canvas.dataset.connectionState = primaryConnection?.state ?? 'none';
+    canvas.dataset.connectionCount = String(connections.length);
+    canvas.dataset.connections = connections.map(item => `${item.source.id}>${item.target.id}:${item.state}`).join(',');
     canvas.dataset.originCells = String(originColony.count);
     canvas.dataset.targetCells = String(dormantColony.count);
     canvas.dataset.targetActive = String(dormantColony.active);
-    canvas.dataset.connectionSource = connection?.source.id ?? 'none';
-    canvas.dataset.connectionTarget = connection?.target.id ?? 'none';
-    canvas.dataset.requiredCells = String(connection?.requiredCells ?? 0);
-    canvas.dataset.transferInterval = String(connection?.transferInterval ?? 0);
-    fpsSample = { started: now, frames: 0 };
+    canvas.dataset.enemyCells = String(enemyColony.count);
+    canvas.dataset.originFaction = originColony.faction ?? 'neutral';
+    canvas.dataset.dormantFaction = dormantColony.faction ?? 'neutral';
+    canvas.dataset.enemyFaction = enemyColony.faction ?? 'neutral';
+    canvas.dataset.originPosition = `${originColony.x.toFixed(1)},${originColony.y.toFixed(1)}`;
+    canvas.dataset.dormantPosition = `${dormantColony.x.toFixed(1)},${dormantColony.y.toFixed(1)}`;
+    canvas.dataset.enemyPosition = `${enemyColony.x.toFixed(1)},${enemyColony.y.toFixed(1)}`;
+    canvas.dataset.connectionSource = primaryConnection?.source.id ?? 'none';
+    canvas.dataset.connectionTarget = primaryConnection?.target.id ?? 'none';
+    canvas.dataset.requiredCells = String(primaryConnection?.requiredCells ?? 0);
+    canvas.dataset.transferInterval = String(primaryConnection?.transferInterval ?? 0);
+    canvas.dataset.simulationPaused = String(simulationPaused);
+    fpsSample = { started: realNow, frames: 0 };
   }
   requestAnimationFrame(gameLoop);
 }
@@ -758,6 +892,7 @@ resizeCanvas();
 updateReadout();
 fitAllColonies(false);
 selectedColony = originColony;
-growthStatus.textContent = '在珊瑚色细胞膜内按下并拖向灰色核心';
+growthStatus.textContent = '珊瑚色玩家 · 蓝色敌人 · 灰色中立核心';
 scheduleColonyGrowth(originColony);
+scheduleColonyGrowth(enemyColony);
 requestAnimationFrame(gameLoop);

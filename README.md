@@ -24,6 +24,10 @@ This first version focuses on proving the visual language, growth model, and cam
 - Animated generation-scaled transfer across established links (1.5s, 1s, and 0.75s)
 - Converted colonies combine autonomous growth with incoming link growth
 - Active colonies can reconnect in either direction after a link is cut
+- A blue enemy faction with the same recursive growth rules as the player
+- Simultaneous opposing links where incoming enemy cells destroy one target cell
+- Last-cell capture that converts a defeated core to the attacker's faction
+- A pause-and-drag layout mode for repositioning colonies freely
 - Drag-to-cut gestures that split and return chain cells to both colonies
 - Animated cell births and branch formation
 - Multiple cell sizes that communicate hierarchy
@@ -58,15 +62,17 @@ No package installation or build step is required.
 - Scroll to zoom around the cursor
 - Use `+` and `−` for stepped zoom
 - Use `全览` to frame the complete organism
-- Press inside an active membrane and drag onto a gray colony to establish a link
+- Press inside any active membrane and drag onto another colony to establish a directed link
 - After a link is established, drag across it from empty space to cut it
 - Use right- or middle-button drag to pan while a connection exists
-- Observe the organism grow autonomously; growth cannot be paused or scrubbed
+- Use `拖动模式` to pause the simulation and reposition any colony
+- Observe player and enemy colonies grow autonomously when layout mode is off
 
 ## Architecture
 
 - `OrganismWorld` generates the recursive cell hierarchy and world positions
 - `CanvasRenderer` draws cells, branches, birth animation, and visibility-culls the scene
+- Faction-aware colonies and independent connection state machines support simultaneous combat links
 - Camera utilities translate between screen and world coordinates
 - The animation loop renders the world and measures frame rate
 - HTML/CSS provide the interface independently from the game renderer
@@ -76,7 +82,7 @@ No package installation or build step is required.
 - Cell selection and direct manipulation
 - Resource collection and energy transfer through branches
 - Territory, collision, and growth constraints
-- Enemy organisms and simple AI
+- Enemy decision-making and simple AI
 - Cell health, damage, splitting, and consumption
 - WebGL rendering through PixiJS when simulation scale requires it
 - Deterministic simulation state for saves and multiplayer synchronization

@@ -26,7 +26,7 @@ button { font: inherit; }
   z-index: 10;
 }
 
-.brand, .live-mark, .canvas-meta, .readout small, .pan-hint, .view-tools {
+.brand, .live-mark, .layout-mode-button, .canvas-meta, .readout small, .pan-hint, .view-tools {
   font-family: "DM Mono", monospace;
   letter-spacing: .11em;
   text-transform: uppercase;
@@ -37,6 +37,9 @@ button { font: inherit; }
 .header-actions { display: flex; align-items: center; gap: 24px; }
 .live-mark { color: #696b64; font-size: 8px; }
 .live-mark i { display: inline-block; width: 4px; height: 4px; margin: 0 7px 2px 0; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.layout-mode-button { padding: 8px 11px; border: 1px solid rgba(255,255,255,.13); color: #85877f; background: transparent; cursor: pointer; font-size: 8px; transition: color .2s, border-color .2s, background .2s; }
+.layout-mode-button:hover { color: var(--ink); }
+.layout-mode-button.active { color: #0d0f0d; border-color: #e9e6dd; background: #e9e6dd; }
 .stage {
   position: relative;
   min-height: 0;
@@ -49,6 +52,7 @@ button { font: inherit; }
 .stage.dragging { cursor: grabbing; }
 .stage.connecting { cursor: crosshair; }
 .stage.cutting { cursor: crosshair; }
+.stage.layout-mode { cursor: move; }
 #gameCanvas { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
 
 .canvas-meta { position: absolute; left: 28px; top: 22px; display: flex; gap: 18px; color: var(--accent); font-size: 8px; pointer-events: none; }
@@ -72,6 +76,7 @@ button { font: inherit; }
   .lab-shell { grid-template-rows: 60px 1fr; }
   .topbar { padding: 0 18px; }
   .live-mark { display: none; }
+  .layout-mode-button { padding: 7px 9px; }
   .canvas-meta { left: 18px; top: 18px; }
   .coordinates { display: none; }
   .readout { right: 18px; top: 15px; }
