@@ -21,9 +21,15 @@ This first version focuses on proving the visual language, growth model, and cam
 - Dormant gray colonies that can be captured by an active colony
 - Drag-to-connect interaction from any point inside an active membrane
 - Distance-scaled cell-chain construction that consumes cells from the source colony
-- Four colony levels, with level 4 unlocked by reaching the complete 259-cell organism
+- Four dynamic colony levels based on current population, with level 4 at the complete 259-cell organism
 - Level-scaled replication intervals of 2s, 1.75s, 1.5s, and 1.25s
 - Level-scaled transfer intervals of 1.75s, 1.5s, 1.25s, and 1s
+- Established links transmit cloned cells without reducing the source colony
+- Bridge fragments falling into a dormant colony activate it for the bridge owner's faction
+- Serpentine bridge construction, transfer, curve-aware cutting, and two-sided retraction
+- One to four concentric membrane layers that communicate colony level at a glance
+- In-progress bridges can be cut, causing every built bridge cell to retract to its source
+- Faction-aware bridge refunds: friendly cells reinforce, hostile cells damage or capture
 - Distance-proportional bridge costs with evenly spaced chain cells
 - Selection-based colony metadata for population, level, replication, and transfer timing
 - Live player-versus-enemy population balance bar

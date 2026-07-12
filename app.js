@@ -212,8 +212,26 @@ function localMembranePoints(colony) {
   return membraneTemplates.get(colony.membraneTemplate);
 }
 
+function membraneLayerCount(colony) {
+  return colony.active ? colonyLevel(colony) : 1;
+}
+
+function membranePointsForLayer(colony, layerIndex) {
+  const offset = layerIndex * 15;
+  if (!offset) return localMembranePoints(colony);
+  return localMembranePoints(colony).map(point => {
+    const distance = Math.hypot(point.x, point.y) || 1;
+    const scale = (distance + offset) / distance;
+    return { x: point.x * scale, y: point.y * scale };
+  });
+}
+
+function outerMembranePoints(colony) {
+  return membranePointsForLayer(colony, membraneLayerCount(colony) - 1);
+}
+
 function worldMembranePoints(colony) {
-  return localMembranePoints(colony).map(point => ({ x: point.x + colony.x, y: point.y + colony.y }));
+  return outerMembranePoints(colony).map(point => ({ x: point.x + colony.x, y: point.y + colony.y }));
 }
 
 function pointInPolygon(point, polygon) {
@@ -232,9 +250,10 @@ function supportPoint(colony, directionX, directionY) {
   const length = Math.hypot(directionX, directionY) || 1;
   const dx = directionX / length;
   const dy = directionY / length;
-  let best = localMembranePoints(colony)[0];
+  const membranePoints = outerMembranePoints(colony);
+  let best = membranePoints[0];
   let bestProjection = -Infinity;
-  for (const point of localMembranePoints(colony)) {
+  for (const point of membranePoints) {
     const projection = point.x * dx + point.y * dy;
     if (projection > bestProjection) {
       bestProjection = projection;
@@ -270,10 +289,53 @@ function displayedConnectionEndpoints(activeConnection) {
   };
 }
 
+function snakeGeometry(activeConnection, now) {
+  const { start, end } = displayedConnectionEndpoints(activeConnection);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const normalX = -dy / length;
+  const normalY = dx / length;
+  const waves = clamp(Math.round(length / 280), 2, 7);
+  const amplitude = Math.min(48, Math.max(14, length * .055));
+  const motionRate = activeConnection.state === 'established' ? .00035 : .003;
+  const phase = activeConnection.wavePhase + now * motionRate;
+  return {
+    start,
+    end,
+    pointAt(amount) {
+      const t = clamp(amount);
+      const envelope = Math.sin(Math.PI * t);
+      const offset = Math.sin(t * waves * Math.PI * 2 - phase) * amplitude * envelope;
+      return {
+        x: lerp(start.x, end.x, t) + normalX * offset,
+        y: lerp(start.y, end.y, t) + normalY * offset
+      };
+    }
+  };
+}
+
+function drawSnakeSegment(ctx, geometry, fromAmount, toAmount) {
+  const from = clamp(fromAmount);
+  const to = clamp(toAmount);
+  if (to - from < .0001) return;
+  const steps = Math.max(3, Math.ceil((to - from) * 44));
+  const first = geometry.pointAt(from);
+  ctx.beginPath();
+  ctx.moveTo(first.x, first.y);
+  for (let step = 1; step <= steps; step += 1) {
+    const point = geometry.pointAt(lerp(from, to, step / steps));
+    ctx.lineTo(point.x, point.y);
+  }
+  ctx.stroke();
+}
+
 function colonyLevel(colony) {
   if (!colony?.active) return 0;
-  if (colony.maxCount >= MAX_CELLS) return 4;
-  return clamp(Math.max(1, colony.maxGeneration), 1, 3);
+  if (colony.count >= 259) return 4;
+  if (colony.count >= 44) return 3;
+  if (colony.count >= 8) return 2;
+  return 1;
 }
 
 function formatSeconds(milliseconds) {
@@ -339,13 +401,15 @@ function changeColonyCount(colony, delta) {
   if (colony.membraneTemplate !== previousTemplate && !cameraTouched && viewport.width > 1) {
     requestAnimationFrame(() => fitAllColonies(true));
   }
-  if (colonyLevel(colony) !== previousLevel) {
+  const levelChanged = colonyLevel(colony) !== previousLevel;
+  if (levelChanged) {
     for (const activeConnection of connections.filter(item => item.state === 'established' && item.source === colony)) {
       clearTimeout(activeConnection.transferTimer);
-      updateEstablishedConnectionStatus(activeConnection, '源群落升级');
+      updateEstablishedConnectionStatus(activeConnection, delta > 0 ? '源群落升级' : '源群落降级');
       scheduleTransfer(activeConnection);
     }
   }
+  if (delta < 0 && levelChanged && colony.active) scheduleColonyGrowth(colony);
   if (delta < 0 && colony.active && !colony.growthTimer) scheduleColonyGrowth(colony);
   return true;
 }
@@ -417,7 +481,7 @@ function establishConnection(source, target) {
   const { start, end } = connectionEndpoints(source, target);
   const surfaceDistance = Math.hypot(end.x - start.x, end.y - start.y);
   const requiredCells = Math.max(2, Math.round(surfaceDistance / CONNECTION_CELL_SPACING) - 1);
-  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, surfaceDistance, buildTimer: null, transferTimer: null };
+  const activeConnection = { id: `${source.id}-${target.id}-${Date.now()}`, source, target, state: 'building', builtCells: 0, requiredCells, surfaceDistance, wavePhase: Math.random() * Math.PI * 2, buildTimer: null, transferTimer: null };
   connections.push(activeConnection);
   selectedColony = source;
   growthStatus.textContent = `建立连接 · 0 / ${requiredCells}`;
@@ -449,8 +513,7 @@ function launchTransfer(activeConnection) {
   if (!connections.includes(activeConnection) || activeConnection.state !== 'established') return;
   const { source, target } = activeConnection;
   const sameFaction = source.faction === target.faction;
-  if (source.count <= 1 || (sameFaction && target.count >= MAX_CELLS)) return;
-  changeColonyCount(source, -1);
+  if (sameFaction && target.count >= MAX_CELLS) return;
   transferParticles.push({ connection: activeConnection, source, target, faction: source.faction, started: simulationTime, duration: 820 });
 }
 
@@ -482,35 +545,101 @@ function segmentIntersectionAmount(lineStart, lineEnd, cutStart, cutEnd) {
   return lineAmount;
 }
 
+function snakeIntersectionAmount(activeConnection, cutStart, cutEnd, now, maxAmount = 1) {
+  const geometry = snakeGeometry(activeConnection, now);
+  const steps = 48;
+  let previous = geometry.pointAt(0);
+  for (let step = 1; step <= steps; step += 1) {
+    const previousAmount = (step - 1) / steps * maxAmount;
+    const currentAmount = step / steps * maxAmount;
+    const current = geometry.pointAt(currentAmount);
+    const localAmount = segmentIntersectionAmount(previous, current, cutStart, cutEnd);
+    if (localAmount !== null) return lerp(previousAmount, currentAmount, localAmount);
+    previous = current;
+  }
+  return null;
+}
+
+function receiveFactionCells(target, faction, amount, activeConnection) {
+  const result = { added: 0, destroyed: 0, captured: false, activated: false };
+  if (amount <= 0) return result;
+  if (!target.active) {
+    activateColony(target, faction, activeConnection);
+    changeColonyCount(target, amount);
+    result.added = amount;
+    result.activated = true;
+    return result;
+  }
+  if (target.faction === faction) {
+    changeColonyCount(target, amount);
+    result.added = amount;
+    return result;
+  }
+  const destroyed = Math.min(amount, Math.max(0, target.count - 1));
+  if (destroyed > 0) changeColonyCount(target, -destroyed);
+  result.destroyed = destroyed;
+  let remaining = amount - destroyed;
+  if (remaining > 0) {
+    captureColony(target, faction, activeConnection);
+    result.captured = true;
+    remaining -= 1;
+    if (remaining > 0) {
+      changeColonyCount(target, remaining);
+      result.added = remaining;
+    }
+  }
+  return result;
+}
+
 function finishConnectionRetraction(activeConnection) {
   if (!connections.includes(activeConnection) || activeConnection.state !== 'retracting') return;
   changeColonyCount(activeConnection.source, activeConnection.sourceRefund);
-  changeColonyCount(activeConnection.target, activeConnection.targetRefund);
-  growthStatus.textContent = `连接已切断 · 左侧返还 ${activeConnection.leftRefund} · 右侧返还 ${activeConnection.rightRefund} · 可重新建链`;
+  if (activeConnection.returnToSource) {
+    growthStatus.textContent = `建桥已取消 · ${activeConnection.sourceRefund} 个细胞全部返回源群落`;
+    connections = connections.filter(item => item !== activeConnection);
+    return;
+  }
+  const targetResult = receiveFactionCells(
+    activeConnection.target,
+    activeConnection.source.faction,
+    activeConnection.targetRefund,
+    activeConnection
+  );
+  growthStatus.textContent = targetResult.captured
+    ? `连接已切断 · 目标被桥梁细胞占领 · 可重新建链`
+    : targetResult.destroyed > 0
+      ? `连接已切断 · 目标损失 ${targetResult.destroyed} 个细胞 · 可重新建链`
+      : `连接已切断 · 左侧返还 ${activeConnection.leftRefund} · 右侧返还 ${activeConnection.rightRefund} · 可重新建链`;
   connections = connections.filter(item => item !== activeConnection);
 }
 
 function cutConnection(activeConnection, amount) {
-  if (!connections.includes(activeConnection) || activeConnection.state !== 'established') return;
+  if (!connections.includes(activeConnection) || !['building', 'established'].includes(activeConnection.state)) return;
+  const wasBuilding = activeConnection.state === 'building';
   clearTimeout(activeConnection.transferTimer);
   clearTimeout(activeConnection.buildTimer);
   transferParticles = transferParticles.filter(particle => particle.connection !== activeConnection);
-  const sourceRefund = clamp(Math.round(amount * activeConnection.requiredCells), 0, activeConnection.requiredCells);
-  const targetRefund = activeConnection.requiredCells - sourceRefund;
+  const sourceRefund = wasBuilding
+    ? activeConnection.builtCells
+    : clamp(Math.round(amount * activeConnection.requiredCells), 0, activeConnection.requiredCells);
+  const targetRefund = wasBuilding ? 0 : activeConnection.requiredCells - sourceRefund;
   const sourceIsLeft = activeConnection.source.x <= activeConnection.target.x;
   const leftRefund = sourceIsLeft ? sourceRefund : targetRefund;
   const rightRefund = sourceIsLeft ? targetRefund : sourceRefund;
   activeConnection.state = 'retracting';
+  activeConnection.returnToSource = wasBuilding;
   activeConnection.cutAmount = amount;
   activeConnection.sourceRefund = sourceRefund;
   activeConnection.targetRefund = targetRefund;
   activeConnection.leftRefund = leftRefund;
   activeConnection.rightRefund = rightRefund;
   activeConnection.retractStarted = simulationTime;
-  activeConnection.retractDuration = 1440;
+  activeConnection.retractDuration = wasBuilding ? 980 : 1440;
   canvas.dataset.cutLeft = String(leftRefund);
   canvas.dataset.cutRight = String(rightRefund);
-  growthStatus.textContent = `正在撤回 · 左侧 ${leftRefund} · 右侧 ${rightRefund}`;
+  growthStatus.textContent = wasBuilding
+    ? `取消建桥 · ${sourceRefund} 个细胞正在返回源群落`
+    : `正在撤回 · 左侧 ${leftRefund} · 右侧 ${rightRefund}`;
 }
 
 function updateConnectionRetractions(now) {
@@ -525,18 +654,8 @@ function updateTransfers(now) {
   const remaining = [];
   for (const particle of transferParticles) {
     if (now - particle.started >= particle.duration) {
-      const { target } = particle;
-      if (!target.active) {
-        activateColony(target, particle.faction, particle.connection);
-        changeColonyCount(target, 1);
-      } else if (target.faction === particle.faction) {
-        changeColonyCount(target, 1);
-      } else if (target.count > 1) {
-        changeColonyCount(target, -1);
-        growthStatus.textContent = `交战 · ${particle.source.faction === 'enemy' ? '敌人' : '玩家'}消灭目标 1 个细胞`;
-      } else {
-        captureColony(target, particle.faction, particle.connection);
-      }
+      const result = receiveFactionCells(particle.target, particle.faction, 1, particle.connection);
+      if (result.destroyed > 0) growthStatus.textContent = `交战 · ${particle.source.faction === 'enemy' ? '敌人' : '玩家'}消灭目标 1 个细胞`;
     } else {
       remaining.push(particle);
     }
@@ -574,23 +693,24 @@ class CanvasRenderer {
   }
 
   drawMembrane(ctx, colony) {
-    const points = localMembranePoints(colony);
     const active = colony.active;
     const selected = colony === selectedColony;
     ctx.save();
     ctx.translate(colony.x, colony.y);
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index].x, points[index].y);
-    ctx.closePath();
-    ctx.strokeStyle = active ? factionColor(colony) : INACTIVE_COLOR;
-    ctx.globalAlpha = selected ? .16 : .08;
-    ctx.lineWidth = (selected ? 4 : 3) / camera.zoom;
-    ctx.stroke();
-    ctx.strokeStyle = active ? factionColor(colony) : INACTIVE_COLOR;
-    ctx.globalAlpha = active ? (selected ? .78 : .48) : .42;
-    ctx.lineWidth = (selected ? 1.25 : .8) / camera.zoom;
-    ctx.stroke();
+    for (let layer = 0; layer < membraneLayerCount(colony); layer += 1) {
+      const points = membranePointsForLayer(colony, layer);
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index].x, points[index].y);
+      ctx.closePath();
+      ctx.strokeStyle = active ? factionColor(colony) : INACTIVE_COLOR;
+      ctx.globalAlpha = (selected ? .15 : .065) * (1 - layer * .08);
+      ctx.lineWidth = (selected ? 4 : 3) / camera.zoom;
+      ctx.stroke();
+      ctx.globalAlpha = (active ? (selected ? .78 : .52) : .42) * (1 - layer * .1);
+      ctx.lineWidth = (selected ? 1.2 : .78) / camera.zoom;
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -672,61 +792,79 @@ class CanvasRenderer {
 
   drawConnection(ctx, now, activeConnection) {
     ctx.save();
-    const { start, end } = displayedConnectionEndpoints(activeConnection);
+    const geometry = snakeGeometry(activeConnection, now);
     const linkColor = factionColor(activeConnection.source);
+    ctx.strokeStyle = linkColor;
+    ctx.globalAlpha = .42;
+    ctx.lineWidth = 1.2 / camera.zoom;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     if (activeConnection.state === 'retracting') {
       const retractProgress = smoothstep((now - activeConnection.retractStarted) / activeConnection.retractDuration);
       const leftEndAmount = lerp(activeConnection.cutAmount, 0, retractProgress);
+      if (activeConnection.returnToSource) {
+        drawSnakeSegment(ctx, geometry, 0, leftEndAmount);
+        for (let index = 1; index <= activeConnection.builtCells; index += 1) {
+          const initialAmount = index / (activeConnection.requiredCells + 1);
+          const point = geometry.pointAt(lerp(initialAmount, 0, retractProgress));
+          ctx.fillStyle = linkColor;
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 3 / camera.zoom, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+        return;
+      }
       const rightStartAmount = lerp(activeConnection.cutAmount, 1, retractProgress);
-      ctx.strokeStyle = linkColor;
-      ctx.globalAlpha = .42;
-      ctx.lineWidth = 1.2 / camera.zoom;
-      ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(lerp(start.x, end.x, leftEndAmount), lerp(start.y, end.y, leftEndAmount));
-      ctx.moveTo(lerp(start.x, end.x, rightStartAmount), lerp(start.y, end.y, rightStartAmount));
-      ctx.lineTo(end.x, end.y);
-      ctx.stroke();
+      drawSnakeSegment(ctx, geometry, 0, leftEndAmount);
+      drawSnakeSegment(ctx, geometry, rightStartAmount, 1);
       for (let index = 1; index <= activeConnection.requiredCells; index += 1) {
         const initialAmount = index / (activeConnection.requiredCells + 1);
         const destination = index <= activeConnection.sourceRefund ? 0 : 1;
         const amount = lerp(initialAmount, destination, retractProgress);
+        const point = geometry.pointAt(amount);
         ctx.fillStyle = linkColor;
         ctx.globalAlpha = 1;
         ctx.beginPath();
-        ctx.arc(lerp(start.x, end.x, amount), lerp(start.y, end.y, amount), 3 / camera.zoom, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, 3 / camera.zoom, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
       return;
     }
     const progress = activeConnection.state === 'building' ? activeConnection.builtCells / (activeConnection.requiredCells + 1) : 1;
-    const lineEnd = { x: lerp(start.x, end.x, progress), y: lerp(start.y, end.y, progress) };
-    ctx.strokeStyle = linkColor;
-    ctx.globalAlpha = .42;
-    ctx.lineWidth = 1.2 / camera.zoom;
-    ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(lineEnd.x, lineEnd.y);
-    ctx.stroke();
+    drawSnakeSegment(ctx, geometry, 0, progress);
     for (let index = 1; index <= activeConnection.builtCells; index += 1) {
       const amount = index / (activeConnection.requiredCells + 1);
+      const point = geometry.pointAt(amount);
       ctx.fillStyle = linkColor;
       ctx.globalAlpha = 1;
       ctx.beginPath();
-      ctx.arc(lerp(start.x, end.x, amount), lerp(start.y, end.y, amount), 3 / camera.zoom, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, 3 / camera.zoom, 0, Math.PI * 2);
       ctx.fill();
+    }
+    if (activeConnection.state === 'building' && progress > 0) {
+      const head = geometry.pointAt(progress);
+      ctx.save();
+      ctx.globalAlpha = .92;
+      ctx.fillStyle = linkColor;
+      ctx.shadowColor = linkColor;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, 4.5 / camera.zoom, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
     for (const particle of transferParticles.filter(item => item.connection === activeConnection)) {
       const amount = smoothstep((now - particle.started) / particle.duration);
-      const x = lerp(start.x, end.x, amount);
-      const y = lerp(start.y, end.y, amount);
+      const point = geometry.pointAt(amount);
       ctx.save();
       ctx.fillStyle = factionColor(particle.source);
       ctx.shadowColor = factionColor(particle.source);
       ctx.shadowBlur = 14;
       ctx.beginPath();
-      ctx.arc(x, y, 5 / camera.zoom, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, 5 / camera.zoom, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -868,7 +1006,7 @@ canvas.addEventListener('pointerdown', event => {
     pointerInteraction = { type: 'selection' };
     return;
   }
-  if (event.button === 0 && connections.some(item => item.state === 'established') && !anyHit) {
+  if (event.button === 0 && connections.some(item => ['building', 'established'].includes(item.state)) && !anyHit) {
     pointerInteraction = { type: 'cut', startX: event.clientX, startY: event.clientY, start: worldPoint, current: worldPoint, dragging: false };
     stage.classList.add('cutting');
     return;
@@ -909,9 +1047,11 @@ function finishPointerInteraction(event) {
     const target = colonyAtPoint(dropPoint, colony => colony !== pointerInteraction.source);
     if (target) establishConnection(pointerInteraction.source, target);
   } else if (pointerInteraction.type === 'cut' && pointerInteraction.dragging) {
-    for (const activeConnection of connections.filter(item => item.state === 'established')) {
-      const { start, end } = displayedConnectionEndpoints(activeConnection);
-      const amount = segmentIntersectionAmount(start, end, pointerInteraction.start, pointerInteraction.current);
+    for (const activeConnection of connections.filter(item => ['building', 'established'].includes(item.state))) {
+      const maxAmount = activeConnection.state === 'building'
+        ? activeConnection.builtCells / (activeConnection.requiredCells + 1)
+        : 1;
+      const amount = snakeIntersectionAmount(activeConnection, pointerInteraction.start, pointerInteraction.current, simulationTime, maxAmount);
       if (amount !== null) cutConnection(activeConnection, amount);
     }
   }
