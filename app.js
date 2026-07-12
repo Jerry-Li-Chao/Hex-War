@@ -1,14 +1,16 @@
-const MAX_CELLS = 259;
-const FIRST_BRANCH_LENGTH = 250;
-const FRACTAL_SCALE = .32;
-const GROWTH_INTERVALS = { 1: 2000, 2: 1250, 3: 750, 4: 500 };
-const GROWTH_BATCHES = { 1: 1, 2: 1, 3: 2, 4: 2 };
-const TRANSFER_INTERVALS = { 1: 1750, 2: 1500, 3: 1250, 4: 1000 };
-const MEMBRANE_TEMPLATE_COUNTS = [1, 7, 43, 259];
-const PLAYER_COLORS = ['#ff735d', '#f48667', '#ed9875', '#e4aa86'];
-const ENEMY_COLORS = ['#9be83f', '#aaf05a', '#baf477', '#cdf79a'];
-const INACTIVE_COLOR = '#747873';
-const CONNECTION_CELL_SPACING = 70;
+const {
+  CONNECTION_CELL_SPACING,
+  ENEMY_COLORS,
+  GROWTH_BATCHES,
+  GROWTH_INTERVALS,
+  INACTIVE_COLOR,
+  MAX_CELLS,
+  MEMBRANE_TEMPLATE_COUNTS,
+  PLAYER_COLORS,
+  TRANSFER_INTERVALS
+} = window.HexWarConfig;
+const { buildMembrane, createGrowthOrder, OrganismWorld } = window.HexWarFractal;
+const { clamp, easeOutBack, lerp, smoothstep } = window.HexWarMath;
 
 const canvas = document.querySelector('#gameCanvas');
 const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -45,124 +47,8 @@ let fpsSample = { started: performance.now(), frames: 0 };
 let averageRenderMs = 0;
 const birthTimes = new Map();
 
-function clamp(value, min = 0, max = 1) { return Math.min(max, Math.max(min, value)); }
-function smoothstep(value) { const t = clamp(value); return t * t * (3 - 2 * t); }
-function easeOutBack(value) {
-  const t = clamp(value) - 1;
-  return 1 + 2.70158 * t * t * t + 1.70158 * t * t;
-}
-function lerp(a, b, amount) { return a + (b - a) * amount; }
+// Colony construction and static world layout
 function birthKey(colony, nodeId) { return `${colony.id}:${nodeId}`; }
-
-function shuffle(items) {
-  const result = [...items];
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
-  }
-  return result;
-}
-
-function createGrowthOrder(nodes) {
-  const order = [0];
-  const maxDepth = Math.max(...nodes.map(node => node.depth));
-  for (let depth = 1; depth <= maxDepth; depth += 1) {
-    order.push(...shuffle(nodes.filter(node => node.depth === depth).map(node => node.id)));
-  }
-  return order;
-}
-
-class OrganismWorld {
-  constructor(limit) { this.nodes = this.generate(limit); }
-
-  generate(limit) {
-    const nodes = [{ id: 0, parent: null, depth: 0, radius: 38, x: 0, y: 0 }];
-    const queue = [0];
-    while (nodes.length < limit && queue.length) {
-      const parentId = queue.shift();
-      const parent = nodes[parentId];
-      const branchLength = FIRST_BRANCH_LENGTH * Math.pow(FRACTAL_SCALE, parent.depth);
-      const rotation = -Math.PI / 2 + parent.depth * Math.PI / 6;
-      for (let childIndex = 0; childIndex < 6 && nodes.length < limit; childIndex += 1) {
-        const id = nodes.length;
-        const depth = parent.depth + 1;
-        const angle = rotation + childIndex * Math.PI / 3;
-        nodes.push({
-          id,
-          parent: parentId,
-          depth,
-          radius: Math.max(3.8, 23 * Math.pow(.47, depth - 1)),
-          x: parent.x + Math.cos(angle) * branchLength,
-          y: parent.y + Math.sin(angle) * branchLength
-        });
-        queue.push(id);
-      }
-    }
-    // Preserve generation boundaries, but randomize births inside each generation.
-    // Since every parent is always in the previous generation, the fractal remains valid.
-    const ordered = [nodes[0]];
-    const maxDepth = Math.max(...nodes.map(node => node.depth));
-    for (let depth = 1; depth <= maxDepth; depth += 1) {
-      ordered.push(...shuffle(nodes.filter(node => node.depth === depth)));
-    }
-    const newIdByOldId = new Map(ordered.map((node, id) => [node.id, id]));
-    return ordered.map((node, id) => ({
-      ...node,
-      id,
-      parent: node.parent === null ? null : newIdByOldId.get(node.parent)
-    }));
-  }
-}
-
-function convexHull(points) {
-  if (points.length <= 3) return points;
-  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
-  const cross = (origin, a, b) => (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
-  const lower = [];
-  const upper = [];
-  for (const point of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
-    lower.push(point);
-  }
-  for (let index = sorted.length - 1; index >= 0; index -= 1) {
-    const point = sorted[index];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
-    upper.push(point);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function smoothClosedPolygon(points, passes = 2) {
-  let result = points;
-  for (let pass = 0; pass < passes; pass += 1) {
-    const next = [];
-    for (let index = 0; index < result.length; index += 1) {
-      const current = result[index];
-      const following = result[(index + 1) % result.length];
-      next.push({ x: current.x * .75 + following.x * .25, y: current.y * .75 + following.y * .25 });
-      next.push({ x: current.x * .25 + following.x * .75, y: current.y * .25 + following.y * .75 });
-    }
-    result = next;
-  }
-  return result;
-}
-
-function buildMembrane(world, count) {
-  const visible = world.nodes.slice(0, count);
-  const padding = 20 + Math.min(18, Math.log2(count + 1) * 2.2);
-  const samples = [];
-  const sampleCount = count === 1 ? 32 : 10;
-  for (const node of visible) {
-    const radius = node.radius + padding;
-    for (let sample = 0; sample < sampleCount; sample += 1) {
-      const angle = sample / sampleCount * Math.PI * 2;
-      samples.push({ x: node.x + Math.cos(angle) * radius, y: node.y + Math.sin(angle) * radius });
-    }
-  }
-  return smoothClosedPolygon(convexHull(samples), 2);
-}
 
 const world = new OrganismWorld(MAX_CELLS);
 const membraneTemplates = new Map(MEMBRANE_TEMPLATE_COUNTS.map(count => [count, buildMembrane(world, count)]));
@@ -193,6 +79,7 @@ const originColony = colonies[0];
 const dormantColony = colonies[2];
 const enemyColony = colonies[5];
 
+// Faction presentation and simulation timing helpers
 function factionPalette(colony) {
   if (colony.faction === 'enemy') return ENEMY_COLORS;
   if (colony.faction === 'player') return PLAYER_COLORS;
@@ -377,6 +264,7 @@ function updateFactionBalance() {
   factionBalanceEl.setAttribute('aria-label', `我方 ${playerCells} 个细胞，敌方 ${enemyCells} 个细胞`);
 }
 
+// DOM readouts and hover inspector
 function updateReadout() {
   updateFactionBalance();
   updateInspectorContent(hoveredColony);
@@ -419,6 +307,7 @@ function setHoveredColony(colony) {
   updateInspectorContent(hoveredColony);
 }
 
+// Colony population, growth, activation, and capture
 function changeColonyCount(colony, delta) {
   const previous = colony.count;
   const previousLevel = colonyLevel(colony);
@@ -508,6 +397,7 @@ function captureColony(colony, faction, activeConnection) {
   scheduleColonyGrowth(colony);
 }
 
+// Connection construction and continuous transfer
 function buildConnectionStep(activeConnection) {
   if (!connections.includes(activeConnection) || activeConnection.state !== 'building') return;
   if (simulationPaused) {
@@ -590,6 +480,7 @@ function scheduleTransfer(activeConnection) {
   }, interval);
 }
 
+// Cutting, retraction, and faction-aware cell resolution
 function segmentIntersectionAmount(lineStart, lineEnd, cutStart, cutEnd) {
   const rx = lineEnd.x - lineStart.x;
   const ry = lineEnd.y - lineStart.y;
@@ -730,6 +621,7 @@ function isWorldPointInView(x, y, padding = 0) {
   return Math.abs(x - camera.x) <= halfWidth && Math.abs(y - camera.y) <= halfHeight;
 }
 
+// Canvas rendering
 class CanvasRenderer {
   constructor(ctx) { this.ctx = ctx; }
 
@@ -1000,6 +892,7 @@ class CanvasRenderer {
 
 const renderer = new CanvasRenderer(context);
 
+// Viewport and camera
 function resizeCanvas() {
   const rect = stage.getBoundingClientRect();
   viewport = { width: rect.width, height: rect.height, dpr: Math.min(1.35, window.devicePixelRatio || 1) };
@@ -1095,6 +988,7 @@ function colonyAtPoint(point, predicate = () => true) {
   return colonies.find(colony => predicate(colony) && pointInPolygon(point, worldMembranePoints(colony)));
 }
 
+// Pointer and camera controls
 canvas.addEventListener('pointerdown', event => {
   const worldPoint = screenToWorld(event.clientX, event.clientY);
   const activeHit = colonyAtPoint(worldPoint, colony => colony.active);
@@ -1211,6 +1105,7 @@ layoutModeButton.addEventListener('click', () => {
 });
 window.addEventListener('resize', () => { resizeCanvas(); fitAllColonies(false); });
 
+// Main simulation and rendering loop
 function gameLoop(realNow) {
   const renderStarted = performance.now();
   const frameDelta = Math.min(50, Math.max(0, realNow - previousFrameTime));

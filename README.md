@@ -88,12 +88,15 @@ No package installation or build step is required.
 
 ## Architecture
 
-- `OrganismWorld` generates the recursive cell hierarchy and world positions
-- `CanvasRenderer` draws cells, branches, birth animation, and visibility-culls the scene
-- Faction-aware colonies and independent connection state machines support simultaneous combat links
-- Camera utilities translate between screen and world coordinates
-- The animation loop renders the world and measures frame rate
-- HTML/CSS provide the interface independently from the game renderer
+The prototype is split by domain while preserving direct `file://` compatibility:
+
+- `src/config.js` owns gameplay tuning, limits, colors, and timing curves
+- `src/math.js` contains reusable interpolation, easing, clamping, and shuffle helpers
+- `src/fractal.js` generates the recursive organism and cached membrane geometry
+- `app.js` coordinates colony state, combat links, input, UI state, camera, and rendering
+- `styles.css` and `index.html` own presentation and accessible interface structure
+
+The split uses small `HexWar*` browser namespaces instead of ES module imports so the prototype still works when opened directly from disk. A future bundler migration can replace these namespaces without changing the domain boundaries.
 
 ## Next milestones
 

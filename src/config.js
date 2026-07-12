@@ -1,0 +1,13 @@
+window.HexWarConfig = Object.freeze({
+  MAX_CELLS: 259,
+  FIRST_BRANCH_LENGTH: 250,
+  FRACTAL_SCALE: .32,
+  GROWTH_INTERVALS: { 1: 2000, 2: 1250, 3: 750, 4: 500 },
+  GROWTH_BATCHES: { 1: 1, 2: 1, 3: 2, 4: 2 },
+  TRANSFER_INTERVALS: { 1: 1750, 2: 1500, 3: 1250, 4: 1000 },
+  MEMBRANE_TEMPLATE_COUNTS: [1, 7, 43, 259],
+  PLAYER_COLORS: ['#ff735d', '#f48667', '#ed9875', '#e4aa86'],
+  ENEMY_COLORS: ['#9be83f', '#aaf05a', '#baf477', '#cdf79a'],
+  INACTIVE_COLOR: '#747873',
+  CONNECTION_CELL_SPACING: 70
+});
